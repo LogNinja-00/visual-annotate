@@ -159,6 +159,21 @@ async function captureScreenshot(el) {
           }
           return false;
         },
+        onclone: (clonedDoc) => {
+          const all = clonedDoc.querySelectorAll('*');
+          all.forEach((el) => {
+            const cs = getComputedStyle(el);
+            COLOR_PROPS.forEach((prop) => {
+              const val = cs.getPropertyValue(prop);
+              if (val && OKLAB_RE.test(val)) {
+                const converted = convertOklabValue(val);
+                if (converted && converted !== val) {
+                  el.style.setProperty(prop, converted);
+                }
+              }
+            });
+          });
+        },
       });
     } finally {
       if (oklabSaved) restoreOklabColors(oklabSaved);
