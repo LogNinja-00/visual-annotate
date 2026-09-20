@@ -22,10 +22,12 @@ function ensureHtml2canvas() {
 }
 
 // Host apps can render content over several animation phases; wait for any
-// `.mint-gen` elements to report their phase as done before we shoot.
+// element that advertises a `data-phase` to report its phase as done before we
+// shoot. Generalizes what used to be a hardcoded `.mint-gen` selector so the
+// tool isn't tied to one host app's class name.
 function waitForRenderPhasesSettled() {
   return new Promise((resolve) => {
-    const phasedEls = document.querySelectorAll('.mint-gen');
+    const phasedEls = document.querySelectorAll('[data-phase]');
     if (phasedEls.length === 0) return resolve();
 
     const allDone = () =>
