@@ -2,6 +2,7 @@ import { createConsoleCapture } from './console-capture.js';
 import { locate } from './locator.js';
 import { captureElement } from './screenshot.js';
 import { injectStyles } from './styles.js';
+import { submitComments } from './client.js';
 
 export function initAnnotator(userConfig = {}) {
   const config = {
@@ -107,27 +108,15 @@ export function initAnnotator(userConfig = {}) {
       btn.disabled = true;
       btn.textContent = 'Sending...';
       try {
-        const res = await fetch(`${config.serverUrl}/submit`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ comments: [comment] }),
-        });
-        const data = await res.json();
-        if (data.issues && data.issues.length > 0) {
-          btn.textContent = 'Done!';
-          btn.style.background = '#4caf50';
-          console.log('[visual-annotate] Issue created:', data.issues[0].html_url);
-          setTimeout(closePanel, 800);
-        } else {
-          btn.textContent = 'Failed - try again';
-          btn.style.background = '#ff6b6b';
-          console.error('[visual-annotate] Submit failed:', data.error || data);
-          setTimeout(() => { btn.disabled = false; btn.textContent = 'Submit to GitHub'; btn.style.background = '#29ADC4'; }, 2000);
-        }
+        const issues = await submitComments(config.serverUrl, [comment]);
+        btn.textContent = 'Done!';
+        btn.style.background = '#4caf50';
+        console.log('[visual-annotate] Issue created:', issues[0].html_url);
+        setTimeout(closePanel, 800);
       } catch (err) {
-        btn.textContent = 'Server not running!';
+        btn.textContent = err.offline ? 'Server not running!' : 'Failed - try again';
         btn.style.background = '#ff6b6b';
-        console.error('[visual-annotate] Could not reach server. Is `npm run va` running?', err);
+        console.error('[visual-annotate] Submit failed:', err.message || err);
         setTimeout(() => { btn.disabled = false; btn.textContent = 'Submit to GitHub'; btn.style.background = '#29ADC4'; }, 2000);
       }
     };
@@ -170,27 +159,18 @@ export function initAnnotator(userConfig = {}) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Sending…';
     try {
-      const res = await fetch(`${config.serverUrl}/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comments: pending }),
-      });
-      const data = await res.json();
-      if (data.issues) {
-        pending.length = 0;
-        updateDock();
-        console.log(
-          '[visual-annotate] Created issues:',
-          data.issues.map((i) => i.html_url)
-        );
-      } else {
-        console.error('[visual-annotate] Submit failed:', data.error || data);
-      }
-    } catch (err) {
-      console.error(
-        '[visual-annotate] Could not reach the local server. Is `npx visual-annotate serve` running?',
-        err
+      const issues = await submitComments(config.serverUrl, pending);
+      pending.length = 0;
+      updateDock();
+      console.log(
+        '[visual-annotate] Created issues:',
+        issues.map((i) => i.html_url)
       );
+    } catch (err) {
+      const hint = err.offline
+        ? ' Is `npx visual-annotate serve` running?'
+        : '';
+      console.error(`[visual-annotate] Submit failed:${hint}`, err.message || err);
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Submit all';
