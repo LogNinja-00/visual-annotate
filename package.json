@@ -1,0 +1,28 @@
+{
+  "name": "visual-annotate",
+  "version": "0.1.0",
+  "description": "Click any element on your site during development, leave a comment, and turn it into a GitHub issue automatically.",
+  "type": "module",
+  "main": "src/browser.js",
+  "bin": {
+    "visual-annotate": "bin/cli.js"
+  },
+  "files": [
+    "src",
+    "server",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "node bin/cli.js",
+    "serve": "node bin/cli.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "html2canvas": "^1.4.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
