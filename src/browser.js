@@ -1,132 +1,6 @@
 import { createConsoleCapture } from './console-capture.js';
 import { locate } from './locator.js';
-
-let html2canvasReady = null;
-
-function ensureHtml2canvas() {
-  if (window.html2canvas) return Promise.resolve();
-  if (html2canvasReady) return html2canvasReady;
-  html2canvasReady = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = '/html2canvas.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load html2canvas'));
-    document.head.appendChild(script);
-  });
-  return html2canvasReady;
-}
-
-function waitForMintGenSettled() {
-  return new Promise((resolve) => {
-    const mintEls = document.querySelectorAll('.mint-gen');
-    if (mintEls.length === 0) return resolve();
-
-    const allDone = () => Array.from(mintEls).every((el) => el.getAttribute('data-phase') === 'done');
-    if (allDone()) return resolve();
-
-    const observers = [];
-    let resolved = false;
-
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-      observers.forEach((o) => o.disconnect());
-    };
-
-    mintEls.forEach((el) => {
-      if (el.getAttribute('data-phase') === 'done') return;
-      const obs = new MutationObserver(() => {
-        if (allDone()) { cleanup(); resolve(); }
-      });
-      obs.observe(el, { attributes: true, attributeFilter: ['data-phase'] });
-      observers.push(obs);
-    });
-
-    if (allDone()) { cleanup(); resolve(); return; }
-
-    setTimeout(() => { cleanup(); resolve(); }, 4000);
-  });
-}
-
-async function captureScreenshot(el) {
-  try {
-    await ensureHtml2canvas();
-
-    const vpW = window.innerWidth;
-    const vpH = window.innerHeight;
-
-    const saved = {
-      bh: document.body.style.height,
-      bo: document.body.style.overflow,
-      bw: document.body.style.width,
-      oh: document.documentElement.style.height,
-      oo: document.documentElement.style.overflow,
-    };
-    document.body.style.height = vpH + 'px';
-    document.body.style.width = vpW + 'px';
-    document.body.style.overflow = 'hidden';
-    document.documentElement.style.height = vpH + 'px';
-    document.documentElement.style.overflow = 'hidden';
-
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) {
-      document.body.style.height = saved.bh;
-      document.body.style.overflow = saved.bo;
-      document.body.style.width = saved.bw;
-      document.documentElement.style.height = saved.oh;
-      document.documentElement.style.overflow = saved.oo;
-      return null;
-    }
-
-    let canvas;
-    try {
-      await waitForMintGenSettled();
-
-      canvas = await window.html2canvas(document.body, {
-        x: 0,
-        y: 0,
-        width: vpW,
-        height: vpH,
-        windowWidth: vpW,
-        windowHeight: vpH,
-        useCORS: true,
-        allowTaint: true,
-        scale: 1,
-        logging: false,
-        ignoreElements: (node) => {
-          if (!node.classList) return false;
-          for (const cls of node.classList) {
-            if (cls.startsWith('__va_')) return true;
-          }
-          return false;
-        },
-      });
-    } finally {
-      document.body.style.height = saved.bh;
-      document.body.style.overflow = saved.bo;
-      document.body.style.width = saved.bw;
-      document.documentElement.style.height = saved.oh;
-      document.documentElement.style.overflow = saved.oo;
-    }
-
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const rx = rect.width / 2 + 14;
-    const ry = rect.height / 2 + 14;
-
-    const ctx = canvas.getContext('2d');
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-
-    return canvas.toDataURL('image/png');
-  } catch (err) {
-    console.error('[VA] Screenshot failed:', err.message || err);
-    return null;
-  }
-}
+import { captureElement } from './screenshot.js';
 
 const STYLE_ID = '__va_style__';
 
@@ -216,7 +90,7 @@ export function initAnnotator(userConfig = {}) {
       ? `${loc.component ? loc.component + ' — ' : ''}${loc.file}${loc.line ? ':' + loc.line : ''}`
       : loc.selector;
 
-    currentScreenshot = await captureScreenshot(el);
+    currentScreenshot = await captureElement(el);
 
     const panel = document.createElement('div');
     panel.className = '__va_panel';
