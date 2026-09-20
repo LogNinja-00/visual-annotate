@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "dev": "node bin/cli.js",
-    "serve": "node bin/cli.js"
+    "serve": "node bin/cli.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
