@@ -12,7 +12,7 @@
 // on why a single universal exact-location mechanism isn't realistic across
 // arbitrary stacks.
 
-function cssPath(el) {
+export function cssPath(el) {
   const parts = [];
   let node = el;
   while (node && node.nodeType === 1 && parts.length < 6) {
