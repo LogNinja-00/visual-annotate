@@ -23,10 +23,21 @@ export function createGithubScreenshotProvider({
   github,
   owner,
   repo,
-  branch,
   dir = DEFAULT_DIR,
   maxBytes = DEFAULT_MAX_BYTES,
 } = {}) {
+  // Screenshots go into a folder on the repository's default branch — the same
+  // repo the issue is filed against. No side branches, no branch creation.
+  let defaultBranch;
+
+  async function targetBranch() {
+    if (!defaultBranch) {
+      const meta = await github.getRepo(owner, repo);
+      defaultBranch = meta.default_branch;
+    }
+    return defaultBranch;
+  }
+
   return {
     name: 'github',
 
@@ -40,8 +51,9 @@ export function createGithubScreenshotProvider({
         return null;
       }
 
+      const branch = await targetBranch();
       const repoPath = datedPath(dir, annotation);
-      await github.ensureBranch(owner, repo, branch);
+
       await github.putFile({
         owner,
         repo,

@@ -47,7 +47,6 @@ export function createSubmissionDeps(config, { cwd = process.cwd(), github } = {
     github: client,
     owner: config.owner,
     repo: config.repo,
-    branch: config.screenshotBranch,
     dir: config.screenshotDir,
     maxBytes: config.screenshotMaxBytes,
   });
