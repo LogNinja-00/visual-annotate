@@ -63,25 +63,6 @@ test('ensureLabel creates the label when it is missing', async () => {
   assert.equal(calls[1].url, 'https://api.test/repos/me/repo/labels');
 });
 
-test('ensureBranch returns early when the branch exists', async () => {
-  const { github, calls } = client([{ status: 200, body: {} }]);
-  assert.equal(await github.ensureBranch('me', 'repo', 'assets'), 'assets');
-  assert.equal(calls.length, 1);
-});
-
-test('ensureBranch forks the default branch when missing', async () => {
-  const { github, calls } = client([
-    { status: 404, body: {} },
-    { status: 200, body: { default_branch: 'main' } },
-    { status: 200, body: { object: { sha: 'abc' } } },
-    { status: 201, body: {} },
-  ]);
-  await github.ensureBranch('me', 'repo', 'assets');
-  assert.equal(calls.length, 4);
-  assert.equal(calls[3].options.method, 'POST');
-  assert.deepEqual(JSON.parse(calls[3].options.body), { ref: 'refs/heads/assets', sha: 'abc' });
-});
-
 test('getFileText decodes base64 file contents', async () => {
   const content = Buffer.from('export const x = 1;').toString('base64');
   const { github } = client([{ status: 200, body: { type: 'file', content } }]);

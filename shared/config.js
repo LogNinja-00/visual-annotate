@@ -4,7 +4,6 @@
 const DEFAULTS = {
   label: 'visual-annotation',
   screenshotProvider: 'github',
-  screenshotBranch: 'visual-annotator-assets',
   port: 4545,
 };
 
@@ -27,11 +26,6 @@ export function resolveConfig({ options = {}, env = process.env } = {}) {
       options.screenshotProvider,
       env.VA_SCREENSHOT_PROVIDER,
       DEFAULTS.screenshotProvider
-    ),
-    screenshotBranch: firstDefined(
-      options.screenshotBranch,
-      env.VA_SCREENSHOT_BRANCH,
-      DEFAULTS.screenshotBranch
     ),
     screenshotDir: firstDefined(options.screenshotDir, env.VA_SCREENSHOT_DIR),
     screenshotMaxBytes: options.screenshotMaxBytes,

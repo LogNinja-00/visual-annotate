@@ -41,7 +41,7 @@ Enrichment never throws. Any failure degrades to `null` rather than blocking the
 
 Where a screenshot ends up, chosen by config (`server/screenshots/`). Two providers plus off:
 
-- **github** (default) — commits the PNG into the repo under `.visual-annotator/` and returns a blob URL.
+- **github** (default) — commits the PNG into the repo the issue is filed against, under `.visual-annotator/` on that repo's default branch, and returns a blob URL.
 - **local** — writes to a temp directory and references the path; nothing leaves the machine.
 - **off** — no screenshots.
 

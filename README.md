@@ -90,8 +90,7 @@ Options passed to `initAnnotator` (or the plugin) win over environment variables
 | `GITHUB_REPO` | `repo` | — | Repo name |
 | `VA_LABEL` | `label` | `visual-annotation` | Issue label (created if missing) |
 | `VA_SCREENSHOT_PROVIDER` | `screenshotProvider` | `github` | `github`, `local`, or `off` |
-| `VA_SCREENSHOT_BRANCH` | `screenshotBranch` | `visual-annotator-assets` | Branch screenshots are committed to |
-| `VA_SCREENSHOT_DIR` | `screenshotDir` | `.visual-annotator` | Folder inside that branch |
+| `VA_SCREENSHOT_DIR` | `screenshotDir` | `.visual-annotator` | Folder inside the repo |
 | `VA_PORT` | `port` | `4545` | Standalone server port |
 | `VA_TOKEN` | — | random | Pin the standalone session token |
 
@@ -99,15 +98,15 @@ Client options: `submitUrl`, `token`, `enabled`, `allowedHosts` (`null` allows a
 
 ## Screenshots
 
-Screenshots never leave your infrastructure. By default the server commits the PNG through the GitHub Contents API to
+Screenshots never leave your infrastructure. The server commits the PNG through the GitHub Contents API straight into the repo the issue is filed against:
 
 ```
 .visual-annotator/<date>/<annotation-id>.png
 ```
 
-on the `visual-annotator-assets` branch (configurable), and references it from the issue. `main` history stays clean.
+committed to that repository's default branch and referenced from the issue. No side branches, no third-party host.
 
-GitHub's API cannot attach an image to an issue body — the web UI's paperclip uses an internal, session-cookie-backed endpoint a token cannot drive. Hosting the image in the repo is the supported way to get it in front of a reader.
+GitHub's API cannot attach an image to an issue body — the web UI's paperclip uses an internal, session-cookie-backed endpoint a token cannot drive. Committing the image into the repo is the supported way to get it in front of a reader.
 
 Alternatives: `VA_SCREENSHOT_PROVIDER=local` writes to a temp directory and references the path (nothing leaves the machine, but remote collaborators can't see it); `off` disables screenshots entirely.
 

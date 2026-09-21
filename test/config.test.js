@@ -7,7 +7,6 @@ test('resolveConfig falls back to documented defaults', () => {
   const config = resolveConfig({ env: {} });
   assert.equal(config.label, 'visual-annotation');
   assert.equal(config.screenshotProvider, 'github');
-  assert.equal(config.screenshotBranch, 'visual-annotator-assets');
   assert.equal(config.port, 4545);
 });
 
@@ -30,10 +29,10 @@ test('explicit options win over the environment', () => {
 
 test('environment variables win over defaults', () => {
   const config = resolveConfig({
-    env: { VA_LABEL: 'triage', VA_SCREENSHOT_BRANCH: 'shots', VA_PORT: '5000' },
+    env: { VA_LABEL: 'triage', VA_SCREENSHOT_DIR: 'shots', VA_PORT: '5000' },
   });
   assert.equal(config.label, 'triage');
-  assert.equal(config.screenshotBranch, 'shots');
+  assert.equal(config.screenshotDir, 'shots');
   assert.equal(config.port, 5000);
 });
 
