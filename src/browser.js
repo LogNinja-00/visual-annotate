@@ -91,7 +91,7 @@ async function captureScreenshot(el) {
         windowHeight: vpH,
         useCORS: true,
         allowTaint: true,
-        scale: 1,
+        scale: 0.5,
         logging: false,
         ignoreElements: (node) => {
           if (!node.classList) return false;
@@ -121,7 +121,7 @@ async function captureScreenshot(el) {
     ctx.lineWidth = 4;
     ctx.stroke();
 
-    return canvas.toDataURL('image/png');
+    return canvas.toDataURL('image/jpeg', 0.5);
   } catch (err) {
     console.error('[VA] Screenshot failed:', err.message || err);
     return null;
