@@ -141,9 +141,6 @@ function injectStyles() {
     .__va_panel .__va_label { font-size: 11px; color: #9fb3b8; word-break: break-all; }
     .__va_panel button { margin-top: 8px; background: #29ADC4; color: #06222b; border: none; border-radius: 6px; padding: 6px 10px; font-weight: 600; cursor: pointer; font-size: 12px; }
     .__va_panel button.__va_secondary { background: transparent; color: #9fb3b8; margin-left: 6px; }
-    .__va_dock { position: fixed; bottom: 16px; right: 16px; z-index: 2147483647; background: #14181a; color: #fcfafa; font: 13px/1.4 -apple-system, sans-serif; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.4); padding: 10px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-    .__va_dock button { background: #29ADC4; color: #06222b; border: none; border-radius: 6px; padding: 6px 10px; font-weight: 600; cursor: pointer; font-size: 12px; }
-    .__va_badge { background: #ff6b6b; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
   `;
   document.head.appendChild(style);
 }
@@ -170,31 +167,6 @@ export function initAnnotator(userConfig = {}) {
   let active = false;
   let hoverEl = null;
   let currentScreenshot = null;
-  const pending = [];
-
-  const dock = document.createElement('div');
-  dock.className = '__va_dock';
-  dock.innerHTML = `
-    <span>Annotate: <b class="__va_state">off</b></span>
-    <span class="__va_badge" style="display:none">0</span>
-    <button class="__va_submit" style="display:none">Submit all</button>
-  `;
-  document.body.appendChild(dock);
-  const stateLabel = dock.querySelector('.__va_state');
-  const badge = dock.querySelector('.__va_badge');
-  const submitBtn = dock.querySelector('.__va_submit');
-
-  function updateDock() {
-    stateLabel.textContent = active ? 'on (Esc to stop)' : 'off';
-    if (pending.length > 0) {
-      badge.style.display = 'inline-block';
-      badge.textContent = String(pending.length);
-      submitBtn.style.display = 'inline-block';
-    } else {
-      badge.style.display = 'none';
-      submitBtn.style.display = 'none';
-    }
-  }
 
   function onMouseOver(e) {
     if (!active) return;
@@ -280,7 +252,7 @@ export function initAnnotator(userConfig = {}) {
 
   function onClick(e) {
     if (!active) return;
-    if (e.target.closest('.__va_panel') || e.target.closest('.__va_dock')) return;
+    if (e.target.closest('.__va_panel')) return;
     e.preventDefault();
     e.stopPropagation();
     openPanel(e.target, e.clientX, e.clientY);
@@ -292,7 +264,6 @@ export function initAnnotator(userConfig = {}) {
       hoverEl.classList.remove('__va_highlight');
       hoverEl = null;
     }
-    updateDock();
   }
 
   function onKeydown(e) {
@@ -310,51 +281,9 @@ export function initAnnotator(userConfig = {}) {
     }
   }
 
-  async function submitAll() {
-    if (pending.length === 0) return;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Sending…';
-    try {
-      const res = await fetch(`${config.serverUrl}/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comments: pending }),
-      });
-      const data = await res.json();
-      if (data.issues) {
-        pending.length = 0;
-        updateDock();
-        console.log(
-          '[visual-annotate] Created issues:',
-          data.issues.map((i) => i.html_url)
-        );
-      } else {
-        console.error('[visual-annotate] Submit failed:', data.error || data);
-      }
-    } catch (err) {
-      console.error(
-        '[visual-annotate] Could not reach the local server. Is `npx visual-annotate serve` running?',
-        err
-      );
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit all';
-    }
-  }
-
-  submitBtn.onclick = (e) => {
-    e.stopPropagation();
-    submitAll();
-  };
-  dock.addEventListener('click', (e) => {
-    if (e.target === submitBtn) return;
-    e.stopPropagation();
-    toggle();
-  }, true);
   document.addEventListener('mouseover', onMouseOver, true);
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKeydown, true);
-  updateDock();
 
   return {
     destroy() {
@@ -362,7 +291,6 @@ export function initAnnotator(userConfig = {}) {
       document.removeEventListener('mouseover', onMouseOver, true);
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('keydown', onKeydown, true);
-      dock.remove();
       closePanel();
     },
   };
