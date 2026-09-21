@@ -1,7 +1,6 @@
 import http from 'node:http';
 
 const GITHUB_API = 'https://api.github.com';
-const SCREENSHOTS_BRANCH = 'screenshots';
 
 async function githubRequest(path, token, options = {}) {
   const res = await fetch(`${GITHUB_API}${path}`, {
@@ -26,48 +25,6 @@ async function getCollaboratorLogins(owner, repo, token) {
   return collaborators.map((c) => c.login);
 }
 
-async function ensureScreenshotsBranch(owner, repo, token) {
-  try {
-    await githubRequest(`/repos/${owner}/${repo}/branches/${SCREENSHOTS_BRANCH}`, token);
-  } catch {
-    const main = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`, token);
-    await githubRequest(`/repos/${owner}/${repo}/git/refs`, token, {
-      method: 'POST',
-      body: JSON.stringify({
-        ref: `refs/heads/${SCREENSHOTS_BRANCH}`,
-        sha: main.object.sha,
-      }),
-    });
-    console.log(`[VA] Created branch "${SCREENSHOTS_BRANCH}"`);
-  }
-}
-
-async function uploadScreenshot(base64Data, owner, repo, token) {
-  try {
-    const base64Content = base64Data.replace(/^data:image\/png;base64,/, '');
-    const filename = `va-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
-    const path = `screenshots/${filename}`;
-
-    await ensureScreenshotsBranch(owner, repo, token);
-
-    await githubRequest(`/repos/${owner}/${repo}/contents/${path}`, token, {
-      method: 'PUT',
-      body: JSON.stringify({
-        message: `Add annotation screenshot ${filename}`,
-        content: base64Content,
-        branch: SCREENSHOTS_BRANCH,
-      }),
-    });
-
-    const url = `https://github.com/${owner}/${repo}/raw/${SCREENSHOTS_BRANCH}/${path}`;
-    console.log(`[VA] Screenshot uploaded: ${url}`);
-    return url;
-  } catch (err) {
-    console.error('[VA] Screenshot upload failed:', err.message);
-    return null;
-  }
-}
-
 function formatIssueBody(comment, mentions) {
   const loc = comment.locator || {};
   const locLine = loc.file
@@ -81,8 +38,8 @@ function formatIssueBody(comment, mentions) {
       ? '```\n' + comment.consoleLog.map((l) => `[${l.level}] ${l.message}`).join('\n') + '\n```'
       : '_No console output was captured for this element — likely a purely visual issue._';
 
-  const screenshotBlock = comment.screenshotUrl
-    ? `\n**Screenshot:**\n![annotation](${comment.screenshotUrl})\n`
+  const screenshotBlock = comment.screenshot
+    ? `\n**Screenshot:**\n![annotation](${comment.screenshot})\n`
     : '';
 
   return [
@@ -139,16 +96,11 @@ export function createServer({ owner, repo, token, port = 4545 }) {
         const mentions = await getCollaboratorLogins(owner, repo, token).catch(() => []);
         const issues = [];
         for (const comment of comments) {
-          let screenshotUrl = null;
-          if (comment.screenshot) {
-            screenshotUrl = await uploadScreenshot(comment.screenshot, owner, repo, token);
-          }
-          const enrichedComment = { ...comment, screenshotUrl };
           const issue = await githubRequest(`/repos/${owner}/${repo}/issues`, token, {
             method: 'POST',
             body: JSON.stringify({
               title: issueTitle(comment),
-              body: formatIssueBody(enrichedComment, mentions),
+              body: formatIssueBody(comment, mentions),
               labels: ['visual-annotation'],
             }),
           });
