@@ -74,22 +74,6 @@ export function createGithub({ token, apiBase = DEFAULT_API, fetchImpl = globalT
       return Buffer.from(data.content, 'base64').toString('utf8');
     },
 
-    async ensureBranch(owner, repo, branch) {
-      try {
-        await request(`/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`);
-        return branch;
-      } catch (err) {
-        if (err.status !== 404) throw err;
-      }
-      const { default_branch: base } = await request(`/repos/${owner}/${repo}`);
-      const ref = await request(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(base)}`);
-      await request(`/repos/${owner}/${repo}/git/refs`, {
-        method: 'POST',
-        body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: ref.object.sha }),
-      });
-      return branch;
-    },
-
     async putFile({ owner, repo, repoPath, branch, base64Content, message, sha }) {
       const send = (fileSha) =>
         request(`/repos/${owner}/${repo}/contents/${contentsPath(repoPath)}`, {

@@ -25,9 +25,9 @@ function stubGithub() {
   const calls = [];
   return {
     calls,
-    ensureBranch: async (...args) => {
-      calls.push({ fn: 'ensureBranch', args });
-      return args[2];
+    getRepo: async (owner, repo) => {
+      calls.push({ fn: 'getRepo', owner, repo });
+      return { default_branch: 'main' };
     },
     putFile: async (input) => {
       calls.push({ fn: 'putFile', input });
@@ -49,30 +49,41 @@ test('dataUrlToBuffer rejects non-image and empty payloads', () => {
   assert.equal(dataUrlToBuffer(null), null);
 });
 
-test('github provider commits under a dated folder and returns a blob url', async () => {
+test('github provider commits into a folder on the repo default branch', async () => {
   const github = stubGithub();
-  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'proj', branch: 'assets' });
+  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'proj' });
   const a = annotation();
   const result = await provider.store(DATA_URL, a);
 
   assert.equal(result.path, `.visual-annotator/2026-01-01/${a.id}.png`);
-  assert.equal(result.branch, 'assets');
-  assert.equal(result.url, `https://github.com/me/proj/blob/assets/${result.path}?raw=true`);
-  assert.deepEqual(github.calls.map((c) => c.fn), ['ensureBranch', 'putFile']);
-  assert.equal(github.calls[0].args[2], 'assets');
+  assert.equal(result.branch, 'main');
+  assert.equal(
+    result.url,
+    `https://github.com/me/proj/blob/main/.visual-annotator/2026-01-01/${a.id}.png?raw=true`
+  );
+  assert.deepEqual(github.calls.map((c) => c.fn), ['getRepo', 'putFile']);
+  assert.equal(github.calls[1].input.branch, 'main');
   assert.equal(github.calls[1].input.base64Content, PNG_BASE64);
+});
+
+test('the default branch is looked up once, not per screenshot', async () => {
+  const github = stubGithub();
+  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'proj' });
+  await provider.store(DATA_URL, annotation());
+  await provider.store(DATA_URL, annotation());
+  assert.equal(github.calls.filter((c) => c.fn === 'getRepo').length, 1);
 });
 
 test('github provider honours a custom directory', async () => {
   const github = stubGithub();
-  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'p', branch: 'b', dir: 'shots' });
+  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'p', dir: 'shots' });
   const result = await provider.store(DATA_URL, annotation());
   assert.match(result.path, /^shots\//);
 });
 
 test('github provider skips oversized screenshots without calling the api', async () => {
   const github = stubGithub();
-  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'p', branch: 'b', maxBytes: 8 });
+  const provider = createGithubScreenshotProvider({ github, owner: 'me', repo: 'p', maxBytes: 8 });
   assert.equal(await provider.store(DATA_URL, annotation()), null);
   assert.equal(github.calls.length, 0);
 });
@@ -94,10 +105,24 @@ test('store degrades to null when the provider throws', async () => {
     provider: 'github',
     owner: 'me',
     repo: 'p',
-    branch: 'b',
     github: {
-      ensureBranch: async () => {
+      getRepo: async () => ({ default_branch: 'main' }),
+      putFile: async () => {
         throw new Error('boom');
+      },
+    },
+  });
+  assert.equal(await store.store(DATA_URL, annotation()), null);
+});
+
+test('store degrades to null when the repo lookup fails', async () => {
+  const store = createScreenshotStore({
+    provider: 'github',
+    owner: 'me',
+    repo: 'p',
+    github: {
+      getRepo: async () => {
+        throw new Error('no access');
       },
       putFile: async () => ({}),
     },
