@@ -35,16 +35,6 @@ export function initAnnotator(userConfig = {}) {
   let hoverEl = null;
   let panelSeq = 0;
 
-  const dock = document.createElement('div');
-  dock.className = '__va_dock';
-  dock.innerHTML = `<span>Annotate: <b class="__va_state">off</b></span>`;
-  document.body.appendChild(dock);
-  const stateLabel = dock.querySelector('.__va_state');
-
-  function updateDock() {
-    stateLabel.textContent = active ? 'on (Esc to stop)' : 'off';
-  }
-
   function onMouseOver(e) {
     if (!active) return;
     if (hoverEl) hoverEl.classList.remove('__va_highlight');
@@ -182,7 +172,7 @@ export function initAnnotator(userConfig = {}) {
 
   function onClick(e) {
     if (!active) return;
-    if (e.target.closest('.__va_panel') || e.target.closest('.__va_dock')) return;
+    if (e.target.closest('.__va_panel')) return;
     e.preventDefault();
     e.stopPropagation();
     openPanel(e.target, e.clientX, e.clientY);
@@ -194,7 +184,6 @@ export function initAnnotator(userConfig = {}) {
       hoverEl.classList.remove('__va_highlight');
       hoverEl = null;
     }
-    updateDock();
   }
 
   function onKeydown(e) {
@@ -228,14 +217,9 @@ export function initAnnotator(userConfig = {}) {
     }
   }
 
-  dock.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggle();
-  }, true);
   document.addEventListener('mouseover', onMouseOver, true);
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKeydown, true);
-  updateDock();
 
   return {
     destroy() {
@@ -244,7 +228,6 @@ export function initAnnotator(userConfig = {}) {
       document.removeEventListener('mouseover', onMouseOver, true);
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('keydown', onKeydown, true);
-      dock.remove();
       closePanel();
     },
   };

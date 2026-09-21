@@ -49,9 +49,8 @@ function click(dom, el) {
   el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
-function dockState(dom) {
-  const label = dom.window.document.querySelector('.__va_state');
-  return label ? label.textContent : null;
+function target(dom) {
+  return dom.window.document.getElementById('target');
 }
 
 function panels(dom) {
@@ -60,33 +59,54 @@ function panels(dom) {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+test('injects no page chrome', () => {
+  const dom = setupDom();
+  const annotator = initAnnotator();
+  assert.equal(dom.window.document.querySelector('.__va_dock'), null, 'no dock element');
+  assert.ok(dom.window.document.getElementById('__va_style__'), 'stylesheet is still injected');
+  annotator.destroy();
+});
+
 test('does nothing when the host is not allowed', () => {
   const dom = setupDom({ url: 'http://example.com/' });
   const annotator = initAnnotator({ allowedHosts: ['localhost'] });
-  assert.equal(dom.window.document.querySelector('.__va_dock'), null);
+  enable(dom);
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 0, 'no panel on a disallowed host');
   assert.equal(typeof annotator.destroy, 'function');
+  annotator.destroy();
 });
 
 test('an allowedHosts of null allows any dev host', () => {
   const dom = setupDom({ url: 'http://192.168.1.5:5173/' });
   const annotator = initAnnotator({ allowedHosts: null });
-  assert.ok(dom.window.document.querySelector('.__va_dock'));
+  enable(dom);
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 1);
   annotator.destroy();
 });
 
-test('renders the dock and toggles with the configured shortcut only', () => {
+test('only the configured shortcut toggles annotating', () => {
   const dom = setupDom();
   const annotator = initAnnotator({ shortcut: { key: 'b', alt: true, shift: true } });
-  assert.equal(dockState(dom), 'off');
+
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 0, 'inactive by default');
 
   press(dom, { code: 'KeyA', altKey: true, shiftKey: true });
-  assert.equal(dockState(dom), 'off', 'KeyA must be ignored when the shortcut is b');
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 0, 'KeyA must be ignored when the shortcut is b');
 
   press(dom, { code: 'KeyB', altKey: true, shiftKey: true });
-  assert.equal(dockState(dom), 'on (Esc to stop)');
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 1, 'KeyB turns annotating on');
+
+  press(dom, { key: 'Escape' }); // close the empty panel, staying active
+  assert.equal(panels(dom).length, 0);
 
   press(dom, { code: 'KeyB', altKey: true, shiftKey: true });
-  assert.equal(dockState(dom), 'off');
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 0, 'KeyB turns annotating back off');
 
   annotator.destroy();
 });
@@ -94,8 +114,9 @@ test('renders the dock and toggles with the configured shortcut only', () => {
 test('the default shortcut is alt+shift+a', () => {
   const dom = setupDom();
   const annotator = initAnnotator();
-  press(dom, { code: 'KeyA', altKey: true, shiftKey: true });
-  assert.equal(dockState(dom), 'on (Esc to stop)');
+  enable(dom);
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 1);
   annotator.destroy();
 });
 
@@ -147,16 +168,17 @@ test('Escape does not discard a draft', () => {
   annotator.destroy();
 });
 
-test('Escape closes an empty panel', () => {
+test('Escape closes an empty panel but keeps annotating on', () => {
   const dom = setupDom();
   const annotator = initAnnotator();
   enable(dom);
-  click(dom, dom.window.document.getElementById('target'));
+  click(dom, target(dom));
 
   press(dom, { key: 'Escape' });
-
   assert.equal(panels(dom).length, 0);
-  assert.equal(dockState(dom), 'on (Esc to stop)', 'annotating stays on');
+
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 1, 'annotating stays on');
   annotator.destroy();
 });
 
@@ -165,7 +187,9 @@ test('Escape with no panel stops annotating', () => {
   const annotator = initAnnotator();
   enable(dom);
   press(dom, { key: 'Escape' });
-  assert.equal(dockState(dom), 'off');
+
+  click(dom, target(dom));
+  assert.equal(panels(dom).length, 0, 'Esc stopped annotating');
   annotator.destroy();
 });
 
@@ -233,13 +257,12 @@ test('submitting an empty comment does not call the server', async () => {
   }
 });
 
-test('destroy removes the dock and stops responding to clicks', () => {
+test('destroy tears down listeners so clicks no longer open panels', () => {
   const dom = setupDom();
   const annotator = initAnnotator();
   enable(dom);
   annotator.destroy();
 
-  assert.equal(dom.window.document.querySelector('.__va_dock'), null);
-  click(dom, dom.window.document.getElementById('target'));
+  click(dom, target(dom));
   assert.equal(panels(dom).length, 0);
 });

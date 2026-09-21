@@ -14,7 +14,6 @@ const STYLES = `
   .__va_panel .__va_hint { margin-top: 6px; font-size: 11px; color: #6f858a; }
   .__va_panel button { margin-top: 8px; background: #29ADC4; color: #06222b; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 700; cursor: pointer; font-size: 13px; }
   .__va_panel button.__va_secondary { background: transparent; color: #9fb3b8; margin-left: 6px; font-weight: 600; font-size: 12px; padding: 6px 10px; }
-  .__va_dock { position: fixed; bottom: 16px; right: 16px; z-index: 2147483647; background: #14181a; color: #fcfafa; font: 13px/1.4 -apple-system, sans-serif; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.4); padding: 10px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
 `;
 
 export function injectStyles() {
