@@ -17,6 +17,14 @@ const HTML2CANVAS_FILE = path.resolve(HERE, '../src/html2canvas.min.js');
 const HTML2CANVAS_ROUTE = '/html2canvas.min.js';
 const CLIENT_MODULE = 'visual-annotate/client';
 
+// The bootstrap has to be a module Vite actually serves and transforms. An
+// inline <script> injected into the HTML is not run through import analysis, so
+// the bare 'visual-annotate/client' specifier would reach the browser verbatim
+// and fail to resolve.
+const BOOTSTRAP_ID = 'virtual:visual-annotator-bootstrap';
+const RESOLVED_BOOTSTRAP_ID = '\0' + BOOTSTRAP_ID;
+const BOOTSTRAP_URL = '/@id/__x00__' + BOOTSTRAP_ID;
+
 export default function visualAnnotate(options = {}) {
   const config = resolveConfig({ options });
   let deps = null;
@@ -28,6 +36,23 @@ export default function visualAnnotate(options = {}) {
     configResolved(resolved) {
       const root = config.root || resolved.root;
       deps = createSubmissionDeps({ ...config, root }, { cwd: root });
+    },
+
+    resolveId(id) {
+      return id === BOOTSTRAP_ID ? RESOLVED_BOOTSTRAP_ID : null;
+    },
+
+    load(id) {
+      if (id !== RESOLVED_BOOTSTRAP_ID) return null;
+      const clientOptions = {
+        submitUrl: SUBMIT_ROUTE,
+        allowedHosts: null,
+        ...config.client,
+      };
+      return [
+        `import { initAnnotator } from '${CLIENT_MODULE}';`,
+        `initAnnotator(${JSON.stringify(clientOptions)});`,
+      ].join('\n');
     },
 
     configureServer(server) {
@@ -60,19 +85,10 @@ export default function visualAnnotate(options = {}) {
     },
 
     transformIndexHtml() {
-      const clientOptions = {
-        submitUrl: SUBMIT_ROUTE,
-        allowedHosts: null,
-        ...config.client,
-      };
       return [
         {
           tag: 'script',
-          attrs: { type: 'module' },
-          children: [
-            `import { initAnnotator } from '${CLIENT_MODULE}';`,
-            `initAnnotator(${JSON.stringify(clientOptions)});`,
-          ].join('\n'),
+          attrs: { type: 'module', src: BOOTSTRAP_URL },
           injectTo: 'body',
         },
       ];

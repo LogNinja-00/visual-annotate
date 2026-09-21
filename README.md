@@ -33,6 +33,10 @@ export default defineConfig({
 
 That's it. In dev, press **Alt+Shift+A** to start annotating, click an element, type what's wrong, and submit with **Ctrl/⌘+Enter**. Nothing is emitted in a production build (`apply: 'serve'`).
 
+Your app must be ESM (`"type": "module"` in `package.json`, as Vite's own scaffolds are). Vite loads a CommonJS config by bundling it with esbuild, and an ESM-only plugin cannot be `require`d from there. If you can't set the type, name the file `vite.config.mjs`.
+
+The plugin also serves `/html2canvas.min.js` from the package, so you don't need to copy anything into `public/`.
+
 ## webpack
 
 ```js
