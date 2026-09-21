@@ -1,12 +1,19 @@
 import { createConsoleCapture } from './console-capture.js';
 import { locate } from './locator.js';
 
-let modernScreenshotFn = null;
+let html2canvasReady = null;
 
-async function ensureModernScreenshot() {
-  if (modernScreenshotFn) return;
-  const mod = await import('https://cdn.jsdelivr.net/npm/modern-screenshot@4.7.0/dist/index.mjs');
-  modernScreenshotFn = mod.domToCanvas;
+function ensureHtml2canvas() {
+  if (window.html2canvas) return Promise.resolve();
+  if (html2canvasReady) return html2canvasReady;
+  html2canvasReady = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = new URL('./html2canvas.min.js', import.meta.url).href;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load html2canvas'));
+    document.head.appendChild(script);
+  });
+  return html2canvasReady;
 }
 
 function waitForMintGenSettled() {
@@ -43,7 +50,7 @@ function waitForMintGenSettled() {
 
 async function captureScreenshot(el) {
   try {
-    await ensureModernScreenshot();
+    await ensureHtml2canvas();
 
     const vpW = window.innerWidth;
     const vpH = window.innerHeight;
@@ -75,24 +82,23 @@ async function captureScreenshot(el) {
     try {
       await waitForMintGenSettled();
 
-      canvas = await modernScreenshotFn(document.body, {
+      canvas = await window.html2canvas(document.body, {
+        x: 0,
+        y: 0,
         width: vpW,
         height: vpH,
-        style: {
-          position: 'fixed',
-          top: '0',
-          left: '0',
-          width: vpW + 'px',
-          height: vpH + 'px',
-          overflow: 'hidden',
-          margin: '0',
-        },
-        filter: (node) => {
-          if (!node.classList) return true;
+        windowWidth: vpW,
+        windowHeight: vpH,
+        useCORS: true,
+        allowTaint: true,
+        scale: 1,
+        logging: false,
+        ignoreElements: (node) => {
+          if (!node.classList) return false;
           for (const cls of node.classList) {
-            if (cls.startsWith('__va_')) return false;
+            if (cls.startsWith('__va_')) return true;
           }
-          return true;
+          return false;
         },
       });
     } finally {
