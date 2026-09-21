@@ -86,6 +86,7 @@ export function initAnnotator(userConfig = {}) {
       <div class="__va_label"></div>
       <div class="__va_shot"></div>
       <textarea placeholder="What's wrong with this?"></textarea>
+      <input class="__va_expected" type="text" placeholder="What did you expect? (optional)" />
       <div>
         <button class="__va_submit_now">Submit to GitHub</button>
         <button class="__va_cancel __va_secondary">Cancel</button>
@@ -97,6 +98,7 @@ export function initAnnotator(userConfig = {}) {
     document.body.appendChild(panel);
 
     const textarea = panel.querySelector('textarea');
+    const expectedInput = panel.querySelector('.__va_expected');
     const shotBox = panel.querySelector('.__va_shot');
     const submitBtn = panel.querySelector('.__va_submit_now');
     textarea.focus();
@@ -129,10 +131,18 @@ export function initAnnotator(userConfig = {}) {
       const shot = screenshot === undefined ? await capture : screenshot;
       const comment = {
         text,
+        expected: expectedInput.value.trim() || undefined,
         locator: loc,
         consoleLog: consoleCapture.snapshot(),
         url: location.href,
         time: new Date().toISOString(),
+        environment: {
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio,
+          userAgent: navigator.userAgent,
+        },
+        locale: navigator.language,
         screenshot: shot || null,
       };
 
