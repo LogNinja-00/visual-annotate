@@ -1,8 +1,7 @@
 import http from 'node:http';
-import { buildAnnotation } from '../shared/annotation.js';
 import { createGithub } from '../shared/github.js';
 import { createScreenshotStore } from './screenshots/index.js';
-import { formatIssueBody, issueTitle } from './issue-format.js';
+import { handleSubmission } from './submit.js';
 
 export function createServer({
   owner,
@@ -38,35 +37,28 @@ export function createServer({
     let raw = '';
     req.on('data', (chunk) => (raw += chunk));
     req.on('end', async () => {
+      let payload;
       try {
-        const { comments } = JSON.parse(raw);
-        if (!Array.isArray(comments) || comments.length === 0) {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ error: 'No comments provided' }));
-        }
-
-        await github.ensureLabel(owner, repo, label);
-
-        const issues = [];
-        for (const incoming of comments) {
-          let annotation = buildAnnotation(incoming);
-          if (annotation.screenshot && annotation.screenshot.dataUrl) {
-            const stored = await screenshots.store(annotation.screenshot.dataUrl, annotation);
-            annotation = { ...annotation, screenshot: stored };
-          }
-          const issue = await github.createIssue(owner, repo, {
-            title: issueTitle(annotation),
-            body: formatIssueBody(annotation),
-            labels: [label],
-          });
-          issues.push({ number: issue.number, html_url: issue.html_url });
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ issues }));
+        payload = JSON.parse(raw);
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: `Invalid JSON: ${err.message}` }));
+      }
+
+      try {
+        const result = await handleSubmission(payload, {
+          github,
+          screenshots,
+          owner,
+          repo,
+          label,
+        });
+        const status = result.created.length > 0 ? 200 : 502;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(err.status || 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, created: [], failed: [] }));
       }
     });
   });
