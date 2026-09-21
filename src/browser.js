@@ -9,47 +9,32 @@ export function initAnnotator(userConfig = {}) {
     enabled: true,
     shortcut: { key: 'a', alt: true, shift: true },
     consoleBufferSize: 50,
-    serverUrl: 'http://localhost:4545',
+    submitUrl: 'http://localhost:4545/submit',
+    token: null,
     allowedHosts: ['localhost', '127.0.0.1'],
     ...userConfig,
   };
 
-  const hostOk = config.allowedHosts.includes(location.hostname);
+  const hostOk = !config.allowedHosts || config.allowedHosts.includes(location.hostname);
   if (!config.enabled || !hostOk) {
     return { destroy() {} };
   }
 
   injectStyles();
   const consoleCapture = createConsoleCapture(config.consoleBufferSize);
-  setTimeout(() => consoleCapture.start(), 1000);
+  const startTimer = setTimeout(() => consoleCapture.start(), 1000);
 
   let active = false;
   let hoverEl = null;
-  let currentScreenshot = null;
-  const pending = [];
 
   const dock = document.createElement('div');
   dock.className = '__va_dock';
-  dock.innerHTML = `
-    <span>Annotate: <b class="__va_state">off</b></span>
-    <span class="__va_badge" style="display:none">0</span>
-    <button class="__va_submit" style="display:none">Submit all</button>
-  `;
+  dock.innerHTML = `<span>Annotate: <b class="__va_state">off</b></span>`;
   document.body.appendChild(dock);
   const stateLabel = dock.querySelector('.__va_state');
-  const badge = dock.querySelector('.__va_badge');
-  const submitBtn = dock.querySelector('.__va_submit');
 
   function updateDock() {
     stateLabel.textContent = active ? 'on (Esc to stop)' : 'off';
-    if (pending.length > 0) {
-      badge.style.display = 'inline-block';
-      badge.textContent = String(pending.length);
-      submitBtn.style.display = 'inline-block';
-    } else {
-      badge.style.display = 'none';
-      submitBtn.style.display = 'none';
-    }
   }
 
   function onMouseOver(e) {
@@ -62,7 +47,6 @@ export function initAnnotator(userConfig = {}) {
   function closePanel() {
     const existing = document.querySelector('.__va_panel');
     if (existing) existing.remove();
-    currentScreenshot = null;
   }
 
   async function openPanel(el, x, y) {
@@ -72,7 +56,7 @@ export function initAnnotator(userConfig = {}) {
       ? `${loc.component ? loc.component + ' — ' : ''}${loc.file}${loc.line ? ':' + loc.line : ''}`
       : loc.selector;
 
-    currentScreenshot = await captureElement(el);
+    const screenshot = await captureElement(el);
 
     const panel = document.createElement('div');
     panel.className = '__va_panel';
@@ -80,7 +64,7 @@ export function initAnnotator(userConfig = {}) {
     panel.style.top = Math.min(y, window.innerHeight - 200) + 'px';
     panel.innerHTML = `
       <div class="__va_label">${label}</div>
-      ${currentScreenshot ? '<div style="margin-top:6px;"><img src="' + currentScreenshot + '" style="width:100%;border-radius:4px;border:1px solid #33393b;" /></div>' : ''}
+      ${screenshot ? '<div style="margin-top:6px;"><img src="' + screenshot + '" style="width:100%;border-radius:4px;border:1px solid #33393b;" /></div>' : ''}
       <textarea placeholder="What's wrong with this?"></textarea>
       <div>
         <button class="__va_submit_now" style="background:#29ADC4;color:#06222b;border:none;border-radius:6px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:13px;">Submit to GitHub</button>
@@ -96,22 +80,25 @@ export function initAnnotator(userConfig = {}) {
       const text = textarea.value.trim();
       if (!text) return;
       const comment = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         text,
         locator: loc,
         consoleLog: consoleCapture.snapshot(),
         url: location.href,
         time: new Date().toISOString(),
-        screenshot: currentScreenshot,
+        screenshot,
       };
       const btn = panel.querySelector('.__va_submit_now');
       btn.disabled = true;
       btn.textContent = 'Sending...';
       try {
-        const issues = await submitComments(config.serverUrl, [comment]);
+        const { created } = await submitComments({
+          url: config.submitUrl,
+          comments: [comment],
+          token: config.token,
+        });
         btn.textContent = 'Done!';
         btn.style.background = '#4caf50';
-        console.log('[visual-annotate] Issue created:', issues[0].html_url);
+        console.log('[visual-annotate] Issue created:', created[0].html_url);
         setTimeout(closePanel, 800);
       } catch (err) {
         btn.textContent = err.offline ? 'Server not running!' : 'Failed - try again';
@@ -154,35 +141,7 @@ export function initAnnotator(userConfig = {}) {
     }
   }
 
-  async function submitAll() {
-    if (pending.length === 0) return;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Sending…';
-    try {
-      const issues = await submitComments(config.serverUrl, pending);
-      pending.length = 0;
-      updateDock();
-      console.log(
-        '[visual-annotate] Created issues:',
-        issues.map((i) => i.html_url)
-      );
-    } catch (err) {
-      const hint = err.offline
-        ? ' Is `npx visual-annotate serve` running?'
-        : '';
-      console.error(`[visual-annotate] Submit failed:${hint}`, err.message || err);
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit all';
-    }
-  }
-
-  submitBtn.onclick = (e) => {
-    e.stopPropagation();
-    submitAll();
-  };
   dock.addEventListener('click', (e) => {
-    if (e.target === submitBtn) return;
     e.stopPropagation();
     toggle();
   }, true);
@@ -193,6 +152,7 @@ export function initAnnotator(userConfig = {}) {
 
   return {
     destroy() {
+      clearTimeout(startTimer);
       consoleCapture.stop();
       document.removeEventListener('mouseover', onMouseOver, true);
       document.removeEventListener('click', onClick, true);
