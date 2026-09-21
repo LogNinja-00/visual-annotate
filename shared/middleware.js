@@ -20,19 +20,32 @@ export function readJsonBody(req, maxBytes = DEFAULT_MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let tooLarge = false;
+
     req.on('data', (chunk) => {
+      if (tooLarge) return; // keep draining so the connection can still respond
       size += chunk.length;
       if (size > maxBytes) {
+        tooLarge = true;
+        chunks.length = 0;
         const err = new Error(`Payload too large (limit ${maxBytes} bytes)`);
         err.status = 413;
+        // Deliberately do NOT destroy the request: tearing down the socket here
+        // means the 413 never reaches the client, which just sees a network
+        // error instead of a clear rejection.
         reject(err);
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+
+    req.on('end', () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+
+    req.on('error', (err) => {
+      if (!tooLarge) reject(err);
+    });
   });
 }
 

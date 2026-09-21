@@ -89,3 +89,27 @@ test('a loopback origin is allowed and reaches validation', async () => {
     server.close();
   }
 });
+
+test('an oversized body gets a real 413 rather than a dropped connection', async () => {
+  const server = createServer({
+    ...CONFIG,
+    port: 4990,
+    screenshotProvider: 'off',
+    maxBodyBytes: 200,
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const big = JSON.stringify({
+      comments: [{ text: 'x'.repeat(2000), url: 'http://x/', locator: {} }],
+    });
+    const res = await fetch('http://127.0.0.1:4990/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: big,
+    });
+    assert.equal(res.status, 413);
+    assert.match(JSON.parse(await res.text()).error, /too large/i);
+  } finally {
+    server.close();
+  }
+});
