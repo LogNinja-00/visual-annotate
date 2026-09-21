@@ -1,19 +1,12 @@
 import { createConsoleCapture } from './console-capture.js';
 import { locate } from './locator.js';
 
-let modernScreenshotReady = null;
+let modernScreenshotFn = null;
 
-function ensureModernScreenshot() {
-  if (window.modernScreenshot) return Promise.resolve();
-  if (modernScreenshotReady) return modernScreenshotReady;
-  modernScreenshotReady = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/modern-screenshot@4.7.0/dist/index.umd.js';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load modern-screenshot'));
-    document.head.appendChild(script);
-  });
-  return modernScreenshotReady;
+async function ensureModernScreenshot() {
+  if (modernScreenshotFn) return;
+  const mod = await import('https://cdn.jsdelivr.net/npm/modern-screenshot@4.7.0/dist/index.mjs');
+  modernScreenshotFn = mod.domToCanvas;
 }
 
 function waitForMintGenSettled() {
@@ -82,7 +75,7 @@ async function captureScreenshot(el) {
     try {
       await waitForMintGenSettled();
 
-      canvas = await window.modernScreenshot.domToCanvas(document.body, {
+      canvas = await modernScreenshotFn(document.body, {
         width: vpW,
         height: vpH,
         style: {
