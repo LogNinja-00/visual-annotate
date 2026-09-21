@@ -196,7 +196,10 @@ export async function captureElement(el) {
         windowHeight: vpH,
         useCORS: true,
         allowTaint: true,
-        scale: 1,
+        // Downscaled so captures stay well inside the screenshot budget: a
+        // full-resolution PNG of a large viewport can run to several MB, and
+        // anything over the budget is skipped entirely.
+        scale: 0.5,
         logging: false,
         ignoreElements: (node) => {
           if (!node.classList) return false;
