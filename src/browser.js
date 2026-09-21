@@ -8,7 +8,7 @@ function ensureHtml2canvas() {
   if (html2canvasReady) return html2canvasReady;
   html2canvasReady = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = new URL('./html2canvas.min.js', import.meta.url).href;
+    script.src = '/html2canvas.min.js';
     script.onload = () => resolve();
     script.onerror = () => reject(new Error('Failed to load html2canvas'));
     document.head.appendChild(script);
