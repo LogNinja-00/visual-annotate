@@ -18,8 +18,7 @@
     "serve": "node bin/cli.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "html2canvas": "^1.4.1"
+    "dotenv": "^16.4.5"
   },
   "engines": {
     "node": ">=18"

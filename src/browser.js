@@ -1,19 +1,19 @@
 import { createConsoleCapture } from './console-capture.js';
 import { locate } from './locator.js';
 
-let html2canvasReady = null;
+let modernScreenshotReady = null;
 
-function ensureHtml2canvas() {
-  if (window.html2canvas) return Promise.resolve();
-  if (html2canvasReady) return html2canvasReady;
-  html2canvasReady = new Promise((resolve, reject) => {
+function ensureModernScreenshot() {
+  if (window.modernScreenshot) return Promise.resolve();
+  if (modernScreenshotReady) return modernScreenshotReady;
+  modernScreenshotReady = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/modern-screenshot@4.7.0/dist/index.umd.js';
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load html2canvas'));
+    script.onerror = () => reject(new Error('Failed to load modern-screenshot'));
     document.head.appendChild(script);
   });
-  return html2canvasReady;
+  return modernScreenshotReady;
 }
 
 function waitForMintGenSettled() {
@@ -48,66 +48,9 @@ function waitForMintGenSettled() {
   });
 }
 
-const OKLAB_RE = /oklab\([^)]+\)/g;
-const COLOR_PROPS = [
-  'color', 'background-color', 'border-color',
-  'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
-  'outline-color', 'text-decoration-color', 'column-rule-color',
-  'fill', 'stroke', 'stop-color', 'flood-color', 'lighting-color',
-];
-
-function convertOklabValue(str) {
-  if (!str || !OKLAB_RE.test(str)) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 1;
-  const ctx = canvas.getContext('2d');
-  return str.replace(OKLAB_RE, (match) => {
-    try {
-      ctx.fillStyle = '#000';
-      ctx.fillStyle = match;
-      return ctx.fillStyle;
-    } catch {
-      return match;
-    }
-  });
-}
-
-function sanitizeOklabColors() {
-  const all = document.querySelectorAll('*');
-  const saved = [];
-  all.forEach((el) => {
-    const cs = getComputedStyle(el);
-    const entry = { el, props: {} };
-    let changed = false;
-    COLOR_PROPS.forEach((prop) => {
-      const val = cs.getPropertyValue(prop);
-      if (val && OKLAB_RE.test(val)) {
-        const converted = convertOklabValue(val);
-        if (converted && converted !== val) {
-          entry.props[prop] = el.style.getPropertyValue(prop);
-          el.style.setProperty(prop, converted);
-          changed = true;
-        }
-      }
-    });
-    if (changed) saved.push(entry);
-  });
-  return saved;
-}
-
-function restoreOklabColors(saved) {
-  saved.forEach((entry) => {
-    Object.keys(entry.props).forEach((prop) => {
-      const orig = entry.props[prop];
-      if (orig) entry.el.style.setProperty(prop, orig);
-      else entry.el.style.removeProperty(prop);
-    });
-  });
-}
-
 async function captureScreenshot(el) {
   try {
-    await ensureHtml2canvas();
+    await ensureModernScreenshot();
 
     const vpW = window.innerWidth;
     const vpH = window.innerHeight;
@@ -136,47 +79,30 @@ async function captureScreenshot(el) {
     }
 
     let canvas;
-    let oklabSaved = null;
     try {
       await waitForMintGenSettled();
-      oklabSaved = sanitizeOklabColors();
 
-      canvas = await window.html2canvas(document.body, {
-        x: 0,
-        y: 0,
+      canvas = await window.modernScreenshot.domToCanvas(document.body, {
         width: vpW,
         height: vpH,
-        windowWidth: vpW,
-        windowHeight: vpH,
-        useCORS: true,
-        allowTaint: true,
-        scale: 1,
-        logging: false,
-        ignoreElements: (node) => {
-          if (!node.classList) return false;
-          for (const cls of node.classList) {
-            if (cls.startsWith('__va_')) return true;
-          }
-          return false;
+        style: {
+          position: 'fixed',
+          top: '0',
+          left: '0',
+          width: vpW + 'px',
+          height: vpH + 'px',
+          overflow: 'hidden',
+          margin: '0',
         },
-        onclone: (clonedDoc) => {
-          const all = clonedDoc.querySelectorAll('*');
-          all.forEach((el) => {
-            const cs = getComputedStyle(el);
-            COLOR_PROPS.forEach((prop) => {
-              const val = cs.getPropertyValue(prop);
-              if (val && OKLAB_RE.test(val)) {
-                const converted = convertOklabValue(val);
-                if (converted && converted !== val) {
-                  el.style.setProperty(prop, converted);
-                }
-              }
-            });
-          });
+        filter: (node) => {
+          if (!node.classList) return true;
+          for (const cls of node.classList) {
+            if (cls.startsWith('__va_')) return false;
+          }
+          return true;
         },
       });
     } finally {
-      if (oklabSaved) restoreOklabColors(oklabSaved);
       document.body.style.height = saved.bh;
       document.body.style.overflow = saved.bo;
       document.body.style.width = saved.bw;
