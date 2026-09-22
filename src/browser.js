@@ -109,16 +109,18 @@ async function captureScreenshot(el) {
       document.documentElement.style.overflow = saved.oo;
     }
 
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const rx = rect.width / 2 + 14;
-    const ry = rect.height / 2 + 14;
+    const scaleX = canvas.width / vpW;
+    const scaleY = canvas.height / vpH;
+    const cx = (rect.left + rect.width / 2) * scaleX;
+    const cy = (rect.top + rect.height / 2) * scaleY;
+    const rx = (rect.width / 2 + 14) * scaleX;
+    const ry = (rect.height / 2 + 14) * scaleY;
 
     const ctx = canvas.getContext('2d');
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
     ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = Math.max(4, 4 * scaleX);
     ctx.stroke();
 
     return canvas.toDataURL('image/jpeg', 0.5);

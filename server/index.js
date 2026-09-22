@@ -25,7 +25,35 @@ async function getCollaboratorLogins(owner, repo, token) {
   return collaborators.map((c) => c.login);
 }
 
-function formatIssueBody(comment, mentions) {
+async function uploadScreenshot(owner, repo, token, dataUri) {
+  const match = /^data:image\/(jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/.exec(dataUri || '');
+  if (!match) return null;
+  const isPng = match[1] === 'png';
+  const name = `va-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isPng ? 'png' : 'jpg'}`;
+  const contentType = isPng ? 'image/png' : 'image/jpeg';
+
+  const repoInfo = await githubRequest(`/repos/${owner}/${repo}`, token);
+  const res = await fetch(
+    `https://uploads.github.com/user-attachments/assets?name=${encodeURIComponent(name)}&content_type=${contentType}&repository_id=${repoInfo.id}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': contentType,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: Buffer.from(match[2], 'base64'),
+    },
+  );
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.url) {
+    throw new Error(`Screenshot upload failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return body.url;
+}
+
+function formatIssueBody(comment, mentions, screenshotUrl) {
   const loc = comment.locator || {};
   const locLine = loc.file
     ? `**Location:** \`${loc.file}${loc.line ? ':' + loc.line : ''}\`${
@@ -38,9 +66,11 @@ function formatIssueBody(comment, mentions) {
       ? '```\n' + comment.consoleLog.map((l) => `[${l.level}] ${l.message}`).join('\n') + '\n```'
       : '_No console output was captured for this element — likely a purely visual issue._';
 
-  const screenshotBlock = comment.screenshot
-    ? `\n**Screenshot:**\n![annotation](${comment.screenshot})\n`
-    : '';
+  const screenshotBlock = screenshotUrl
+    ? `\n**Screenshot:**\n![annotation](${screenshotUrl})\n`
+    : comment.screenshot
+      ? '\n**Screenshot:** _failed to upload_\n'
+      : '';
 
   return [
     comment.text,
@@ -96,11 +126,18 @@ export function createServer({ owner, repo, token, port = 4545 }) {
         const mentions = await getCollaboratorLogins(owner, repo, token).catch(() => []);
         const issues = [];
         for (const comment of comments) {
+          let screenshotUrl = null;
+          if (comment.screenshot) {
+            screenshotUrl = await uploadScreenshot(owner, repo, token, comment.screenshot).catch((err) => {
+              console.error('[visual-annotate] Screenshot upload failed:', err.message);
+              return null;
+            });
+          }
           const issue = await githubRequest(`/repos/${owner}/${repo}/issues`, token, {
             method: 'POST',
             body: JSON.stringify({
               title: issueTitle(comment),
-              body: formatIssueBody(comment, mentions),
+              body: formatIssueBody(comment, mentions, screenshotUrl),
               labels: ['visual-annotation'],
             }),
           });
