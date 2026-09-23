@@ -18,10 +18,16 @@ function ensureHtml2canvas() {
 
 function waitForMintGenSettled() {
   return new Promise((resolve) => {
-    const mintEls = document.querySelectorAll('.mint-gen');
+    // Only wait for mints that are actually animating (started but not done).
+    // Idle mints below the fold never start — waiting for them burns the full timeout.
+    const isAnimating = (el) => {
+      const phase = el.getAttribute('data-phase');
+      return phase !== null && phase !== 'done' && phase !== 'idle';
+    };
+    const mintEls = Array.from(document.querySelectorAll('.mint-gen')).filter(isAnimating);
     if (mintEls.length === 0) return resolve();
 
-    const allDone = () => Array.from(mintEls).every((el) => el.getAttribute('data-phase') === 'done');
+    const allDone = () => mintEls.every((el) => el.getAttribute('data-phase') === 'done');
     if (allDone()) return resolve();
 
     const observers = [];
@@ -48,8 +54,64 @@ function waitForMintGenSettled() {
   });
 }
 
+const TEXT_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, a, button, span, li, label, strong, em, blockquote, figcaption, .mint-gen-body, [class*="scramble"]';
+
+function isTextLeaf(n) {
+  if (!n || n.children.length > 0) return false;
+  if (n.closest && n.closest('[class*="__va_"]')) return false;
+  // Exclude mint generate overlays — their intent/code text is not real content
+  // and restoring it shifted layout + drew the ring around fake labels.
+  if (n.closest && n.closest('.mint-gen-code, .mint-gen-pixel, .mint-gen-intent, .mint-gen-stream')) return false;
+  const t = n.textContent;
+  return !!(t && t.trim());
+}
+
+function textLeafNodes(root = document) {
+  return Array.from(root.querySelectorAll(TEXT_SELECTOR)).filter(isTextLeaf);
+}
+
+function clipRingRect(rect, el) {
+  // Match what the user sees: ignore transforms that overflow clipping ancestors
+  // and never draw outside the viewport.
+  let left = rect.left;
+  let top = rect.top;
+  let right = rect.left + rect.width;
+  let bottom = rect.top + rect.height;
+  let node = el && el.parentElement;
+  while (node && node !== document.body && node !== document.documentElement) {
+    let cs;
+    try { cs = getComputedStyle(node); } catch { break; }
+    const ox = cs.overflowX || cs.overflow;
+    const oy = cs.overflowY || cs.overflow;
+    const clipsX = ox === 'hidden' || ox === 'clip' || ox === 'auto' || ox === 'scroll';
+    const clipsY = oy === 'hidden' || oy === 'clip' || oy === 'auto' || oy === 'scroll';
+    if (clipsX || clipsY) {
+      const pr = node.getBoundingClientRect();
+      if (clipsX) {
+        left = Math.max(left, pr.left);
+        right = Math.min(right, pr.right);
+      }
+      if (clipsY) {
+        top = Math.max(top, pr.top);
+        bottom = Math.min(bottom, pr.bottom);
+      }
+    }
+    node = node.parentElement;
+  }
+  left = Math.max(left, 0);
+  top = Math.max(top, 0);
+  right = Math.min(right, window.innerWidth);
+  bottom = Math.min(bottom, window.innerHeight);
+  return {
+    left,
+    top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+}
+
 function samplePageText() {
-  const nodes = document.querySelectorAll('h1, h2, h3, p, a, button, span.block, .mint-gen-body');
+  const nodes = textLeafNodes();
   let text = '';
   for (let i = 0; i < nodes.length; i++) text += nodes[i].textContent + '|';
   return text;
@@ -203,53 +265,32 @@ function normalizeCloneColors(clonedDoc) {
   }
 }
 
-function drawRingInClone(clonedDoc, target) {
-  if (!target) return;
-  const win = clonedDoc.defaultView || target.ownerDocument.defaultView;
-  const rect = target.getBoundingClientRect();
-  if (!rect.width && !rect.height) return;
-
-  const parent = target.parentElement || clonedDoc.body;
-  const parentRect = parent.getBoundingClientRect();
-  try {
-    const pos = win ? win.getComputedStyle(parent).position : getComputedStyle(parent).position;
-    if (pos === 'static') parent.style.setProperty('position', 'relative', 'important');
-  } catch {
-    parent.style.setProperty('position', 'relative', 'important');
-  }
-
-  const pad = 8;
-  const lw = 4;
-  const ring = clonedDoc.createElement('div');
-  ring.setAttribute('data-va-ring', '1');
-  ring.style.cssText =
-    'position:absolute;pointer-events:none;box-sizing:border-box;' +
-    'border:' + lw + 'px solid #ff0000;border-radius:50%;' +
-    'left:' + (rect.left - parentRect.left - pad - lw) + 'px;' +
-    'top:' + (rect.top - parentRect.top - pad - lw) + 'px;' +
-    'width:' + (rect.width + (pad + lw) * 2) + 'px;' +
-    'height:' + (rect.height + (pad + lw) * 2) + 'px;' +
-    'z-index:2147483646;';
-  parent.appendChild(ring);
+function drawRingInClone() {
+  // Ring is drawn on the output canvas after capture — position:fixed inside the
+  // html2canvas iframe landed ~32px off (constant Y error across scroll states).
 }
 
 function stabilizeCloneContent(clonedDoc) {
+  // Neutralize mint generate overlays WITHOUT removing them — removing a child
+  // can turn its parent into a new text leaf (count drift) and shift layout.
+  clonedDoc.querySelectorAll('.mint-gen-code, .mint-gen-pixel, .mint-gen-intent, .mint-gen-stream').forEach((node) => {
+    node.textContent = '';
+    while (node.firstChild) node.removeChild(node.firstChild);
+    node.style.setProperty('display', 'none', 'important');
+    node.style.setProperty('visibility', 'hidden', 'important');
+  });
   clonedDoc.querySelectorAll('.mint-gen').forEach((node) => {
     node.setAttribute('data-phase', 'done');
     node.classList.add('is-done');
     node.classList.remove('is-playing');
   });
-  clonedDoc.querySelectorAll('.mint-gen-code').forEach((node) => {
-    node.style.setProperty('display', 'none', 'important');
-  });
-  clonedDoc.querySelectorAll('.mint-gen-pixel').forEach((node) => {
-    node.style.setProperty('display', 'none', 'important');
-  });
 
   const style = clonedDoc.createElement('style');
   style.setAttribute('data-va-stabilize', '1');
   style.textContent =
-    '*, *::before, *::after { caret-color: transparent !important; }';
+    '*, *::before, *::after { caret-color: transparent !important; }' +
+    '.mint-gen-code, .mint-gen-pixel, .mint-gen-intent, .mint-gen-stream { display: none !important; visibility: hidden !important; }' +
+    '.mint-gen > .mint-gen-body { opacity: 1 !important; visibility: visible !important; }';
   clonedDoc.head.appendChild(style);
 
   try {
@@ -275,16 +316,36 @@ function freezeCloneAnimations(clonedDoc) {
 
 function captureVideoFrameDataUrl(video) {
   try {
-    if (!video || !video.videoWidth || !video.videoHeight) return null;
-    if (video.readyState < 2) return null;
-    const c = document.createElement('canvas');
-    c.width = video.videoWidth;
-    c.height = video.videoHeight;
-    c.getContext('2d').drawImage(video, 0, 0);
-    const dataUrl = c.toDataURL('image/jpeg', 0.9);
-    return dataUrl && dataUrl !== 'data:,' ? dataUrl : null;
+    if (!video) return null;
+    if (video.videoWidth && video.videoHeight && video.readyState >= 2) {
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth;
+      c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
+      const dataUrl = c.toDataURL('image/jpeg', 0.9);
+      if (dataUrl && dataUrl !== 'data:,') return dataUrl;
+    }
+    // No decodable frame (codec/autoplay failure) — bake the poster into a canvas
+    // so the clone still shows a real image instead of a black hole.
+    const poster = video.getAttribute('poster');
+    if (poster && !poster.startsWith('data:')) {
+      // sync best-effort via cached live <img> if any; async path is handled by caller
+      return null;
+    }
+    if (poster && poster.startsWith('data:')) return poster;
+    return null;
   } catch {
     return null;
+  }
+}
+
+function absoluteUrl(url) {
+  if (!url) return url;
+  if (url.startsWith('data:') || url.startsWith('blob:') || /^https?:/i.test(url)) return url;
+  try {
+    return new URL(url, document.baseURI).href;
+  } catch {
+    return url;
   }
 }
 
@@ -294,8 +355,10 @@ function fetchImageAsDataUrl(src) {
       resolve(src || null);
       return;
     }
+    const abs = absoluteUrl(src);
     const live = Array.from(document.images).find(
-      (li) => li.currentSrc === src || li.src === src || li.getAttribute('src') === src
+      (li) => li.currentSrc === src || li.src === src || li.getAttribute('src') === src ||
+        li.currentSrc === abs || li.src === abs
     );
     const fromImg = (img) => {
       try {
@@ -317,100 +380,95 @@ function fetchImageAsDataUrl(src) {
     tmp.crossOrigin = 'anonymous';
     tmp.onload = () => fromImg(tmp);
     tmp.onerror = () => resolve(null);
-    tmp.src = src;
+    tmp.src = abs;
     setTimeout(() => resolve(null), 3000);
   });
 }
 
 function stabilizeCloneMedia(clonedDoc) {
   try {
-    const liveVideos = Array.from(document.querySelectorAll('video'));
-    const liveCanvases = Array.from(document.querySelectorAll('canvas'));
-    const cloneVideos = Array.from(clonedDoc.querySelectorAll('video'));
+    // html2canvas replaces <video> with <canvas> during clone (createVideoClone),
+    // and drawImage(video) is black without a decodable codec. Document order of
+    // live canvas+video matches clone canvas order (video→canvas in place).
+    const liveMedia = Array.from(document.querySelectorAll('canvas, video'));
     const cloneCanvases = Array.from(clonedDoc.querySelectorAll('canvas'));
     const jobs = [];
 
-    cloneVideos.forEach((v, i) => {
-      const live = liveVideos[i];
-      const frame = captureVideoFrameDataUrl(live);
-      const poster =
-        v.getAttribute('poster') ||
-        (live && live.getAttribute('poster'));
-      const src =
-        (live && (live.currentSrc || live.getAttribute('src'))) ||
-        v.currentSrc ||
-        v.getAttribute('src');
-      const fallback = poster || src;
-      const img = clonedDoc.createElement('img');
-      img.setAttribute('data-va-video', '1');
-      img.alt = '';
-      img.className = v.className;
-      img.style.cssText = v.style.cssText || '';
-      img.style.objectFit = 'cover';
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.position = 'absolute';
-      img.style.left = '0';
-      img.style.top = '0';
-      img.style.right = '0';
-      img.style.bottom = '0';
-      img.style.inset = '0';
-      img.style.display = 'block';
-      img.style.zIndex = v.style.zIndex || '';
-      if (poster) {
-        jobs.push(
-          fetchImageAsDataUrl(poster).then((dataUrl) => {
-            const chosen = dataUrl || frame || fallback;
-            if (chosen) img.src = chosen;
-            console.log('[VA] video media', dataUrl ? 'poster-data' : frame ? 'frame' : 'url', (chosen || '').length);
-          })
-        );
-      } else if (frame) {
-        img.src = frame;
-        console.log('[VA] video media frame', frame.length);
-      } else if (src) {
-        jobs.push(
-          fetchImageAsDataUrl(src).then((dataUrl) => {
-            img.src = dataUrl || src;
-            console.log('[VA] video media src', dataUrl ? 'data' : 'url');
-          })
-        );
-      }
-      if (v.parentNode) v.parentNode.replaceChild(img, v);
-    });
+    liveMedia.forEach((src, i) => {
+      const dest = cloneCanvases[i];
+      if (!dest) return;
 
-    cloneCanvases.forEach((canvas, i) => {
-      const live = liveCanvases[i];
-      if (!live || !live.width || !live.height) return;
+      if (src.tagName === 'VIDEO') {
+        const poster = src.getAttribute('poster');
+        const paint = async () => {
+          let url = null;
+          const frame = captureVideoFrameDataUrl(src);
+          if (frame) url = frame;
+          if (!url && poster) url = await fetchImageAsDataUrl(poster);
+          if (!url && poster) url = absoluteUrl(poster);
+          if (!url) {
+            console.warn('[VA] no poster for video clone canvas', i);
+            return;
+          }
+          const img = clonedDoc.createElement('img');
+          img.setAttribute('data-va-video', '1');
+          img.alt = '';
+          img.src = url;
+          img.className = src.className;
+          img.style.cssText = dest.style.cssText || '';
+          img.style.width = dest.width ? dest.width + 'px' : '100%';
+          img.style.height = dest.height ? dest.height + 'px' : '100%';
+          img.style.objectFit = 'cover';
+          img.style.display = 'block';
+          if (dest.parentNode) dest.parentNode.replaceChild(img, dest);
+          console.log('[VA] video→img', url.startsWith('data:') ? 'data' : 'url', url.length);
+        };
+        jobs.push(paint());
+        return;
+      }
+
+      // Live canvas (e.g. PixelScene) — copy pixels across
+      if (!src.width || !src.height) return;
       let dataUrl;
       try {
-        dataUrl = live.toDataURL('image/png');
+        dataUrl = src.toDataURL('image/png');
       } catch {
         return;
       }
       if (!dataUrl || dataUrl === 'data:,') return;
-      const img = clonedDoc.createElement('img');
-      img.setAttribute('data-va-canvas', '1');
-      img.src = dataUrl;
-      img.alt = '';
-      img.className = canvas.className;
-      img.style.cssText = canvas.style.cssText || '';
-      img.style.width = canvas.style.width || live.style.width || '';
-      img.style.height = canvas.style.height || live.style.height || '';
-      if (!img.style.width) img.style.width = live.width + 'px';
-      if (!img.style.height) img.style.height = live.height + 'px';
-      img.style.display = 'block';
-      img.style.position = canvas.style.position || getComputedStyle(live).position;
-      if (canvas.parentNode) canvas.parentNode.replaceChild(img, canvas);
+      try {
+        const ctx = dest.getContext('2d');
+        if (ctx) {
+          const image = new Image();
+          image.src = dataUrl;
+          jobs.push(
+            new Promise((res) => {
+              const done = () => res();
+              image.onload = () => {
+                try {
+                  dest.width = src.width;
+                  dest.height = src.height;
+                  ctx.drawImage(image, 0, 0);
+                } catch {}
+                done();
+              };
+              image.onerror = done;
+              setTimeout(done, 2000);
+            })
+          );
+        }
+      } catch {}
     });
 
     clonedDoc.querySelectorAll('img').forEach((img) => {
       if (img.getAttribute('data-va-video') === '1' && img.src.startsWith('data:')) return;
       const s = img.getAttribute('src');
       if (!s || s.startsWith('data:')) return;
+      const abs = absoluteUrl(s);
       jobs.push(
         fetchImageAsDataUrl(s).then((dataUrl) => {
           if (dataUrl) img.src = dataUrl;
+          else img.src = abs;
         })
       );
     });
@@ -451,18 +509,6 @@ async function captureScreenshot(el) {
     if (samplePageText() !== textBeforeCapture) {
       await waitForStableText(3000, 600);
     }
-    const finalTextSnapshot = (() => {
-      const map = new Map();
-      document
-        .querySelectorAll('h1, h2, h3, p, a, button, span.block, .mint-gen-body')
-        .forEach((n) => {
-          if (n.children.length > 0) return;
-          map.set(n, n.textContent);
-        });
-      return map;
-    })();
-    const textKeys = Array.from(finalTextSnapshot.values());
-
     if (document.fonts && document.fonts.ready) {
       try { await document.fonts.ready; } catch {}
     }
@@ -487,26 +533,38 @@ async function captureScreenshot(el) {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return null;
 
+    // Tag live text leaves so the clone restores by index even if leaf counts drift.
+    const liveTextNodes = textLeafNodes();
+    const textKeys = liveTextNodes.map((n) => n.textContent);
+    liveTextNodes.forEach((n, i) => n.setAttribute('data-va-ti', String(i)));
+
     const hadHighlight = el.classList.contains('__va_highlight');
     el.classList.remove('__va_highlight');
     el.setAttribute('data-va-target', '1');
+    // Viewport CSS px at measure time — drawn onto the canvas after capture.
+    const ringRect = clipRingRect(
+      { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      el
+    );
     let canvas;
     try {
       canvas = await window.html2canvas(document.body, {
-        x: scrollX,
-        y: scrollY,
+        // Crop from document origin; scroll is applied by shifting body in onclone
+        // (x/y = scroll offsets produced a blank foreignObject shot).
+        x: 0,
+        y: 0,
         width: vpW,
         height: vpH,
         windowWidth: vpW,
         windowHeight: vpH,
-        scrollX: -scrollX,
-        scrollY: -scrollY,
+        scrollX: scrollX,
+        scrollY: scrollY,
         useCORS: true,
         allowTaint: true,
         foreignObjectRendering: true,
         scale: 2,
         logging: false,
-        backgroundColor: null,
+        backgroundColor: '#ffffff',
         ignoreElements: (node) => {
           if (!node.classList) return false;
           if (node.hasAttribute && node.hasAttribute('data-va-target')) return false;
@@ -517,17 +575,33 @@ async function captureScreenshot(el) {
           return false;
         },
         onclone: async (clonedDoc) => {
+          try { stabilizeCloneContent(clonedDoc); } catch (e) { console.error('[VA] stabilize failed', e); }
+          // foreignObject SVG renders body from y=0 — shift it so the current
+          // viewport region is what gets captured (x/y crop options alone blanked
+          // the shot when scrolled).
           try {
-            const nodes = [];
-            clonedDoc
-              .querySelectorAll('h1, h2, h3, p, a, button, span.block, .mint-gen-body')
-              .forEach((n) => {
-                if (n.children.length === 0) nodes.push(n);
-              });
-            if (nodes.length === textKeys.length) {
-              nodes.forEach((n, i) => {
-                if (typeof textKeys[i] === 'string') n.textContent = textKeys[i];
-              });
+            if (scrollX > 0 || scrollY > 0) {
+              const b = clonedDoc.body;
+              if (b) {
+                b.style.setProperty('transform', `translate(${-scrollX}px, ${-scrollY}px)`, 'important');
+                b.style.setProperty('transform-origin', '0 0', 'important');
+              }
+            }
+          } catch {}
+          try {
+            let restored = 0;
+            clonedDoc.querySelectorAll('[data-va-ti]').forEach((n) => {
+              const i = Number(n.getAttribute('data-va-ti'));
+              if (Number.isInteger(i) && typeof textKeys[i] === 'string') {
+                n.textContent = textKeys[i];
+                restored += 1;
+              }
+              n.removeAttribute('data-va-ti');
+            });
+            if (restored !== textKeys.length) {
+              console.warn('[VA] text restore', restored, 'vs', textKeys.length);
+            } else {
+              console.log('[VA] text restored', restored);
             }
           } catch {}
           try { await stabilizeCloneMedia(clonedDoc); } catch {}
@@ -549,17 +623,51 @@ async function captureScreenshot(el) {
               await clonedDoc.fonts.ready;
             }
           } catch {}
-          try { stabilizeCloneContent(clonedDoc); } catch (e) { console.error('[VA] stabilize failed', e); }
-          try {
-            const target = clonedDoc.querySelector('[data-va-target]');
-            drawRingInClone(clonedDoc, target);
-          } catch (e) { console.error('[VA] ring failed', e); }
           try { freezeCloneAnimations(clonedDoc); } catch {}
         },
       });
     } finally {
       el.removeAttribute('data-va-target');
       if (hadHighlight) el.classList.add('__va_highlight');
+      liveTextNodes.forEach((n) => n.removeAttribute('data-va-ti'));
+    }
+
+    // Draw the ring on the finished canvas — exact viewport CSS × scale.
+    try {
+      const ctx = canvas.getContext('2d');
+      // html2canvas left scale/translate on this context — reset before drawing
+      // or the ring lands far outside the canvas (red pixels: 0).
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const scale = canvas.width / vpW;
+      const pad = 10;
+      const lw = 3;
+      const radius = 12;
+      const x = (ringRect.left - pad) * scale;
+      const y = (ringRect.top - pad) * scale;
+      const w = (ringRect.width + pad * 2) * scale;
+      const h = (ringRect.height + pad * 2) * scale;
+      ctx.save();
+      ctx.strokeStyle = '#ff0000';
+      ctx.lineWidth = Math.max(2, lw * scale);
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      const r = radius * scale;
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+      console.log('[VA] ringRect', JSON.stringify(ringRect));
+      console.log('[VA] ring drawn', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), cw: canvas.width, ch: canvas.height });
+    } catch (e) {
+      console.error('[VA] ring draw failed', e);
     }
 
     return canvas.toDataURL('image/jpeg', 0.92);

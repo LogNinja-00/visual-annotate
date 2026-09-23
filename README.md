@@ -1,3 +1,13 @@
+> **Team quick start** — from a project root:
+>
+> ```bash
+> git clone https://github.com/LogNinja-00/visual-annotate.git visual-annotate
+> bash visual-annotate/setup.sh
+> # then fill .env and run npm run dev on localhost
+> ```
+>
+> Full checklist: see [INSTALL.md](./INSTALL.md).
+
 # visual-annotate
 
 Click any element on your site while you're developing, leave a comment on it,
