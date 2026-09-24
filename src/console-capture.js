@@ -36,12 +36,14 @@ export function createConsoleCapture(bufferSize = 50) {
       };
     });
 
-    window.addEventListener('error', (e) => {
-      push('error', [`Uncaught: ${e.message} (${e.filename}:${e.lineno})`]);
-    });
-    window.addEventListener('unhandledrejection', (e) => {
-      push('error', [`Unhandled promise rejection: ${e.reason}`]);
-    });
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('error', (e) => {
+        push('error', [`Uncaught: ${e.message} (${e.filename}:${e.lineno})`]);
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        push('error', [`Unhandled promise rejection: ${e.reason}`]);
+      });
+    }
   }
 
   function stop() {

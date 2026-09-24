@@ -15,10 +15,18 @@
   ],
   "scripts": {
     "dev": "node bin/cli.js",
-    "serve": "node bin/cli.js"
+    "serve": "node bin/cli.js",
+    "va": "node bin/cli.js",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test \"test/unit/**/*.test.js\"",
+    "test:e2e": "node test/e2e/run.mjs"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "html2canvas": "^1.4.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
   },
   "engines": {
     "node": ">=18"

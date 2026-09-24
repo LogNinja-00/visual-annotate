@@ -1,2 +1,4 @@
-node_modules/
+*.b64
 .env
+node_modules/
+test/e2e/artifacts/
