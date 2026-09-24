@@ -1,31 +1,57 @@
 {
   "name": "visual-annotate",
-  "version": "0.1.0",
-  "description": "Click any element on your site during development, leave a comment, and turn it into a GitHub issue automatically.",
+  "version": "0.2.0",
+  "description": "Click any element on your site during development, leave a comment, and turn it into a GitHub issue an agent can pick up with full context.",
   "type": "module",
   "main": "src/browser.js",
   "bin": {
     "visual-annotate": "bin/cli.js"
   },
+  "exports": {
+    ".": "./src/browser.js",
+    "./client": "./src/browser.js",
+    "./vite": "./plugins/vite.js",
+    "./webpack": "./plugins/webpack.js",
+    "./server": "./server/index.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "src",
     "server",
+    "shared",
+    "plugins",
     "bin",
-    "README.md"
+    "CONTEXT.md",
+    "README.md",
+    "INSTALL.md",
+    "setup.sh"
   ],
   "scripts": {
     "dev": "node bin/cli.js",
     "serve": "node bin/cli.js",
     "va": "node bin/cli.js",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "node --test \"test/unit/**/*.test.js\"",
+    "test:unit": "node --test",
     "test:e2e": "node test/e2e/run.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "html2canvas": "^1.4.1"
   },
+  "peerDependencies": {
+    "vite": ">=4.0.0",
+    "webpack": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    },
+    "webpack": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "jsdom": "^26.1.0",
     "playwright-core": "^1.49.0"
   },
   "engines": {

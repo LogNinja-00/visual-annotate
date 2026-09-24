@@ -1,18 +1,26 @@
 // Best-effort "where does this element actually live in the source code" resolver.
 //
-// - React (dev build): reads the fiber's _debugSource, which Babel/SWC's dev JSX
-//   transform attaches automatically — gives exact file + line + component name.
+// - React (dev build): reads the fiber's _debugSource (or the component's
+//   _source), which the dev JSX transform attaches — exact file + line +
+//   component name. Note that React 18 with the modern JSX transform only emits
+//   this when @babel/plugin-transform-react-jsx-source (or the SWC equivalent) is
+//   enabled; without it React silently degrades to the CSS-selector fallback.
 // - Vue 3 (dev build): reads the component definition's __file, which the SFC
-//   compiler attaches in development — gives file + component name.
+//   compiler attaches in development — gives file + component name. Climbs the
+//   parent chain to the nearest component that actually has one.
 // - Anything else (plain HTML, Svelte, Angular, or React/Vue in a build that
-//   stripped dev info): falls back to a CSS selector path + visible text, which
-//   is still enough for a human (or an AI) to find the right place by searching.
+//   stripped dev info): falls back to a CSS selector path + visible text +
+//   element markup, which is still enough for a human (or an agent) to find the
+//   right place by searching.
 //
 // This is intentionally "best effort, not magic" — see the README for details
 // on why a single universal exact-location mechanism isn't realistic across
 // arbitrary stacks.
 
-function cssPath(el) {
+const MAX_OUTER_HTML = 2000;
+const MAX_CLIMB = 12;
+
+export function cssPath(el) {
   const parts = [];
   let node = el;
   while (node && node.nodeType === 1 && parts.length < 6) {
@@ -44,20 +52,25 @@ function findReactFiberKey(el) {
   );
 }
 
-function reactSource(el) {
+function componentName(type) {
+  if (!type) return null;
+  return type.displayName || type.name || null;
+}
+
+export function reactSource(el) {
   const key = findReactFiberKey(el);
   if (!key) return null;
+
   let fiber = el[key];
-  for (let i = 0; fiber && i < 12; i++) {
-    const src = fiber._debugSource;
-    if (src) {
-      const name = (fiber.type && (fiber.type.displayName || fiber.type.name)) || null;
+  for (let i = 0; fiber && i < MAX_CLIMB; i++) {
+    const src = fiber._debugSource || (fiber.type && fiber.type._source);
+    if (src && src.fileName) {
       return {
         framework: 'react',
         file: src.fileName,
-        line: src.lineNumber,
-        column: src.columnNumber,
-        component: name,
+        line: typeof src.lineNumber === 'number' ? src.lineNumber : null,
+        column: typeof src.columnNumber === 'number' ? src.columnNumber : null,
+        component: componentName(fiber.type),
       };
     }
     fiber = fiber.return;
@@ -65,34 +78,56 @@ function reactSource(el) {
   return null;
 }
 
-function vueSource(el) {
+function vueInstance(el) {
   const key = Object.keys(el).find(
     (k) => k.startsWith('__vueParentComponent') || k === '__vnode'
   );
   if (!key) return null;
-  try {
-    const inst = el[key];
-    const type = inst?.type || inst?.ctx?.type;
-    if (type && type.__file) {
-      return {
-        framework: 'vue',
-        file: type.__file,
-        component: type.__name || type.name || null,
-      };
+  const value = el[key];
+  // The property can hold a vnode (which points at its component) or the
+  // component instance itself.
+  return value && value.component ? value.component : value;
+}
+
+export function vueSource(el) {
+  let instance = vueInstance(el);
+  for (let i = 0; instance && i < MAX_CLIMB; i++) {
+    try {
+      const type = instance.type || (instance.ctx && instance.ctx.type);
+      if (type && type.__file) {
+        return {
+          framework: 'vue',
+          file: type.__file,
+          line: null,
+          column: null,
+          component: type.__name || type.name || null,
+        };
+      }
+    } catch {
+      // fall through and keep climbing
     }
-  } catch {
-    // fall through to generic path
+    instance = instance.parent;
   }
   return null;
 }
 
+function elementMarkup(el) {
+  try {
+    const html = el.outerHTML;
+    return typeof html === 'string' ? html.slice(0, MAX_OUTER_HTML) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function locate(el) {
   const react = reactSource(el);
-  const vue = !react ? vueSource(el) : null;
-  const base = react || vue || { framework: 'unknown', file: null, component: null };
+  const vue = react ? null : vueSource(el);
+  const base = react || vue || { framework: 'unknown', file: null, line: null, column: null, component: null };
   return {
     ...base,
     selector: cssPath(el),
     text: (el.textContent || '').trim().slice(0, 60),
+    outerHTML: elementMarkup(el),
   };
 }

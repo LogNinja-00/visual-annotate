@@ -7,32 +7,44 @@ import {
   showOverlay,
 } from './selection.js';
 import { captureScreenshot } from './screenshot.js';
+import { injectStyles } from './styles.js';
+import { submitComments } from './client.js';
+
+// `shortcut.key` is written as a letter ('a'), but KeyboardEvent.code is 'KeyA'.
+function shortcutCode(key) {
+  if (!key) return 'KeyA';
+  if (/^Key[A-Z]$/.test(key)) return key;
+  return 'Key' + String(key).toUpperCase();
+}
 
 export function initAnnotator(userConfig = {}) {
   const config = {
     enabled: true,
     shortcut: { key: 'a', alt: true, shift: true },
     consoleBufferSize: 50,
-    serverUrl: 'http://localhost:4545',
+    submitUrl: 'http://localhost:4545/submit',
+    token: null,
     allowedHosts: ['localhost', '127.0.0.1'],
     ...userConfig,
   };
 
-  const hostOk = config.allowedHosts.includes(location.hostname);
+  const hostOk = !config.allowedHosts || config.allowedHosts.includes(location.hostname);
   if (!config.enabled || !hostOk) {
     return { destroy() {} };
   }
 
   ensureOverlayStyles();
+  injectStyles();
   const consoleCapture = createConsoleCapture(config.consoleBufferSize);
-  setTimeout(() => consoleCapture.start(), 1000);
+  const startTimer = setTimeout(() => consoleCapture.start(), 1000);
 
   let active = false;
   let pickedEl = null;
-  let currentScreenshot = null;
   let panelOpen = false;
+  let panelSeq = 0;
   let rafPending = false;
   let lastClient = { x: 0, y: 0 };
+  let currentScreenshot = null;
 
   function setPicked(el) {
     pickedEl = el;
@@ -49,7 +61,6 @@ export function initAnnotator(userConfig = {}) {
       rafPending = false;
       if (!active || panelOpen) return;
       const el = pickElementAt(lastClient.x, lastClient.y);
-      // Only update if changed (or always — cheap enough)
       if (el !== pickedEl) setPicked(el);
       else if (el) showOverlay(el);
     });
@@ -60,19 +71,6 @@ export function initAnnotator(userConfig = {}) {
     setPicked(null);
   }
 
-  function closePanel() {
-    panelOpen = false;
-    const existing = document.querySelector('.__va_panel');
-    if (existing) existing.remove();
-    currentScreenshot = null;
-    if (active) {
-      const el = pickElementAt(lastClient.x, lastClient.y) || pickedEl;
-      setPicked(el);
-    } else {
-      hideOverlay();
-    }
-  }
-
   function setStatus(panel, text, tone) {
     const node = panel.querySelector('.__va_status');
     if (!node) return;
@@ -81,9 +79,34 @@ export function initAnnotator(userConfig = {}) {
     else node.removeAttribute('data-tone');
   }
 
+  function closePanel() {
+    panelSeq += 1;
+    panelOpen = false;
+    currentScreenshot = null;
+    const existing = document.querySelector('.__va_panel');
+    if (existing) existing.remove();
+    if (active) {
+      const el = pickElementAt(lastClient.x, lastClient.y) || pickedEl;
+      setPicked(el);
+    } else {
+      hideOverlay();
+    }
+  }
+
+  // Escape must not throw away work the reporter has started typing.
+  function panelHasDraft() {
+    const panel = document.querySelector('.__va_panel');
+    if (!panel) return false;
+    const text = panel.querySelector('textarea');
+    const expected = panel.querySelector('.__va_expected');
+    return Boolean((text && text.value.trim()) || (expected && expected.value.trim()));
+  }
+
   async function openPanel(el, x, y) {
     if (!el) return;
     closePanel();
+    const seq = panelSeq + 1;
+    panelSeq = seq;
     panelOpen = true;
     hideOverlay();
 
@@ -92,7 +115,6 @@ export function initAnnotator(userConfig = {}) {
       ? `${loc.component ? loc.component + ' — ' : ''}${loc.file}${loc.line ? ':' + loc.line : ''}`
       : loc.selector;
 
-    // Show panel immediately with "Capturing…" so the UI never feels stuck
     const panel = document.createElement('div');
     panel.className = '__va_panel';
     panel.setAttribute('data-va-ui', '1');
@@ -132,82 +154,118 @@ export function initAnnotator(userConfig = {}) {
       <div class="__va_status" data-tone="">Capturing screenshot…</div>
       <div class="__va_shot"></div>
       <textarea placeholder="What's wrong with this?"></textarea>
+      <input class="__va_expected" type="text" placeholder="What did you expect? (optional)" />
       <div>
         <button class="__va_submit_now">Submit to GitHub</button>
         <button class="__va_cancel __va_secondary">Cancel</button>
       </div>
+      <div class="__va_hint">Ctrl/⌘ + Enter to submit</div>
     `;
+    // textContent, never interpolation — selector and file names are page-controlled.
     panel.querySelector('.__va_label').textContent = label;
     document.body.appendChild(panel);
+
     const textarea = panel.querySelector('textarea');
+    const expectedInput = panel.querySelector('.__va_expected');
+    const submitBtn = panel.querySelector('.__va_submit_now');
     textarea.focus();
     panel.querySelector('.__va_cancel').onclick = closePanel;
 
-    // Capture async so the panel paints first
-    currentScreenshot = await captureScreenshot(el);
-    if (!panel.isConnected) return;
-    if (currentScreenshot) {
-      const shot = panel.querySelector('.__va_shot');
-      shot.innerHTML =
-        '<img alt="Screenshot" style="width:100%;border-radius:4px;border:1px solid #33393b;margin-top:6px;" />';
-      shot.querySelector('img').src = currentScreenshot;
-      setStatus(panel, 'Screenshot ready', 'ok');
-    } else {
-      setStatus(panel, 'Screenshot failed — comment will still submit', 'error');
-    }
+    // Capture in the background so the panel paints first.
+    let screenshot;
+    const capture = captureScreenshot(el)
+      .then((dataUrl) => {
+        screenshot = dataUrl;
+        currentScreenshot = dataUrl;
+        if (seq === panelSeq && panel.isConnected) {
+          if (dataUrl) {
+            const shot = panel.querySelector('.__va_shot');
+            shot.innerHTML =
+              '<img alt="Screenshot" style="width:100%;border-radius:4px;border:1px solid #33393b;margin-top:6px;" />';
+            shot.querySelector('img').src = dataUrl;
+            setStatus(panel, 'Screenshot ready', 'ok');
+          } else {
+            setStatus(panel, 'Screenshot failed — comment will still submit', 'error');
+          }
+        }
+        return dataUrl;
+      })
+      .catch(() => {
+        screenshot = null;
+        if (seq === panelSeq && panel.isConnected) {
+          setStatus(panel, 'Screenshot failed — comment will still submit', 'error');
+        }
+        return null;
+      });
 
-    panel.querySelector('.__va_submit_now').onclick = async () => {
+    async function submit() {
       const text = textarea.value.trim();
-      if (!text) return;
+      if (!text) {
+        textarea.focus();
+        return;
+      }
+      const shot = screenshot === undefined ? await capture : screenshot;
       const comment = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         text,
+        expected: expectedInput.value.trim() || undefined,
         locator: loc,
         consoleLog: consoleCapture.snapshot(),
         url: location.href,
         time: new Date().toISOString(),
-        screenshot: currentScreenshot,
+        environment: {
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio,
+          userAgent: navigator.userAgent,
+        },
+        locale: navigator.language,
+        screenshot: shot || null,
       };
-      const btn = panel.querySelector('.__va_submit_now');
-      btn.disabled = true;
-      btn.textContent = 'Sending...';
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending...';
       setStatus(panel, 'Sending to GitHub…');
       try {
-        const res = await fetch(`${config.serverUrl}/submit`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ comments: [comment] }),
+        const { created } = await submitComments({
+          url: config.submitUrl,
+          comments: [comment],
+          token: config.token,
         });
-        const data = await res.json();
-        if (data.issues && data.issues.length > 0) {
-          btn.textContent = 'Done!';
-          btn.style.background = '#4caf50';
-          setStatus(panel, `Issue #${data.issues[0].number} created`, 'ok');
-          console.log('[visual-annotate] Issue created:', data.issues[0].html_url);
-          setTimeout(closePanel, 800);
-        } else {
-          btn.textContent = 'Failed - try again';
-          btn.style.background = '#ff6b6b';
-          setStatus(panel, data.error || 'Submit failed', 'error');
-          console.error('[visual-annotate] Submit failed:', data.error || data);
-          setTimeout(() => {
-            btn.disabled = false;
-            btn.textContent = 'Submit to GitHub';
-            btn.style.background = '#29ADC4';
-          }, 2000);
-        }
+        submitBtn.textContent = 'Done!';
+        submitBtn.style.background = '#4caf50';
+        setStatus(
+          panel,
+          created[0] && created[0].number
+            ? `Issue #${created[0].number} created`
+            : 'Issue created',
+          'ok'
+        );
+        console.log('[visual-annotate] Issue created:', created[0] && created[0].html_url);
+        setTimeout(closePanel, 800);
       } catch (err) {
-        btn.textContent = 'Server not running!';
-        btn.style.background = '#ff6b6b';
-        setStatus(panel, 'Start the VA server (npm run va)', 'error');
-        console.error('[visual-annotate] Could not reach server. Is `npm run va` running?', err);
+        submitBtn.textContent = err.offline ? 'Server not running!' : 'Failed - try again';
+        submitBtn.style.background = '#ff6b6b';
+        setStatus(
+          panel,
+          err.offline ? 'Start the VA server (npm run va)' : err.message || 'Submit failed',
+          'error'
+        );
+        console.error('[visual-annotate] Submit failed:', err.message || err);
         setTimeout(() => {
-          btn.disabled = false;
-          btn.textContent = 'Submit to GitHub';
-          btn.style.background = '#29ADC4';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit to GitHub';
+          submitBtn.style.background = '#29ADC4';
         }, 2000);
       }
-    };
+    }
+
+    submitBtn.onclick = submit;
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        submit();
+      }
+    });
   }
 
   function onClick(e) {
@@ -215,8 +273,10 @@ export function initAnnotator(userConfig = {}) {
     if (e.target.closest && e.target.closest('.__va_panel')) return;
     e.preventDefault();
     e.stopPropagation();
-    // Use the smart-picked element at the click point — not raw e.target
-    const el = pickElementAt(e.clientX, e.clientY) || pickedEl;
+    // Hit-test first (real browsers); fall back to the hovered element, then
+    // the event target itself (jsdom in tests has no elementFromPoint).
+    const fallback = e.target && e.target.nodeType === 1 ? e.target : null;
+    const el = pickElementAt(e.clientX, e.clientY) || pickedEl || fallback;
     if (!el) return;
     openPanel(el, e.clientX, e.clientY);
   }
@@ -225,7 +285,10 @@ export function initAnnotator(userConfig = {}) {
     active = !active;
     document.body.classList.toggle('__va_pick_mode', active);
     if (active) {
-      const el = pickElementAt(lastClient.x || window.innerWidth / 2, lastClient.y || window.innerHeight / 2);
+      const el = pickElementAt(
+        lastClient.x || window.innerWidth / 2,
+        lastClient.y || window.innerHeight / 2
+      );
       setPicked(el);
       console.log('[VA] annotate mode ON — hover to pick, click to comment');
     } else {
@@ -237,33 +300,49 @@ export function initAnnotator(userConfig = {}) {
   }
 
   function onKeydown(e) {
-    const modsOk =
-      e.ctrlKey === !!config.shortcut.ctrl &&
-      e.shiftKey === !!config.shortcut.shift &&
-      e.altKey === !!config.shortcut.alt;
-    const wantsToggle = modsOk && (e.code === 'KeyA' || e.code === 'KeyK');
-    if (wantsToggle) {
-      e.preventDefault();
-      toggle();
-    } else if (e.key === 'Escape' && (active || panelOpen)) {
-      if (panelOpen) {
+    if (e.key === 'Escape') {
+      if (panelHasDraft()) {
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        return;
+      }
+      if (document.querySelector('.__va_panel')) {
+        e.preventDefault();
         closePanel();
-      } else {
+        return;
+      }
+      if (active) {
+        e.preventDefault();
         toggle();
       }
+      return;
+    }
+
+    const shortcut = config.shortcut || {};
+    const modsOk =
+      e.ctrlKey === !!shortcut.ctrl &&
+      e.shiftKey === !!shortcut.shift &&
+      e.altKey === !!shortcut.alt;
+    if (modsOk && e.code === shortcutCode(shortcut.key)) {
+      e.preventDefault();
+      toggle();
     }
   }
 
   document.addEventListener('mousemove', onPointerMove, true);
   document.addEventListener('pointermove', onPointerMove, true);
-  document.addEventListener('mouseout', (e) => {
-    if (!e.relatedTarget && !e.toElement) onPointerLeave();
-  }, true);
+  document.addEventListener(
+    'mouseout',
+    (e) => {
+      if (!e.relatedTarget && !e.toElement) onPointerLeave();
+    },
+    true
+  );
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKeydown, true);
 
   return {
     destroy() {
+      clearTimeout(startTimer);
       consoleCapture.stop();
       document.removeEventListener('mousemove', onPointerMove, true);
       document.removeEventListener('pointermove', onPointerMove, true);
@@ -274,7 +353,6 @@ export function initAnnotator(userConfig = {}) {
       closePanel();
       active = false;
     },
-    // test hooks
     _state: () => ({ active, panelOpen, picked: pickedEl }),
   };
 }

@@ -47,9 +47,12 @@ test('CORS preflight returns 204', async () => {
   const srv = await listenEphemeral();
   try {
     const port = srv.address().port;
-    const res = await fetch(`http://127.0.0.1:${port}/submit`, { method: 'OPTIONS' });
+    const res = await fetch(`http://127.0.0.1:${port}/submit`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:3000' },
+    });
     assert.equal(res.status, 204);
-    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:3000');
   } finally {
     await close(srv);
   }

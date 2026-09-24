@@ -1,161 +1,97 @@
 import http from 'node:http';
 
-const GITHUB_API = 'https://api.github.com';
+import { resolveConfig } from '../shared/config.js';
+import { readJsonBody, DEFAULT_MAX_BODY_BYTES } from '../shared/middleware.js';
+import { createSubmissionDeps } from './deps.js';
+import { handleSubmission } from './submit.js';
 
-async function githubRequest(path, token, options = {}) {
-  const res = await fetch(`${GITHUB_API}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new Error(`GitHub API ${path} failed: ${res.status} ${JSON.stringify(body)}`);
+// Only loopback origins may post to the standalone server. This is what stops a
+// random website you happen to visit from filing issues with your token.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+export function isAllowedOrigin(origin, extra = []) {
+  if (!origin) return true;
+  try {
+    const { hostname } = new URL(origin);
+    return LOOPBACK_HOSTS.has(hostname) || extra.includes(origin) || extra.includes(hostname);
+  } catch {
+    return false;
   }
-  return body;
 }
 
-async function getCollaboratorLogins(owner, repo, token) {
-  const collaborators = await githubRequest(`/repos/${owner}/${repo}/collaborators`, token);
-  return collaborators.map((c) => c.login);
-}
-
-async function uploadScreenshot(owner, repo, token, dataUri) {
-  const match = /^data:image\/(jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/.exec(dataUri || '');
-  if (!match) return null;
-  const isPng = match[1] === 'png';
-  const name = `va-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isPng ? 'png' : 'jpg'}`;
-  const contentType = isPng ? 'image/png' : 'image/jpeg';
-
-  const repoInfo = await githubRequest(`/repos/${owner}/${repo}`, token);
-  const res = await fetch(
-    `https://uploads.github.com/user-attachments/assets?name=${encodeURIComponent(name)}&content_type=${contentType}&repository_id=${repoInfo.id}`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': contentType,
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      body: Buffer.from(match[2], 'base64'),
-    },
-  );
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body?.url) {
-    throw new Error(`Screenshot upload failed: ${res.status} ${JSON.stringify(body)}`);
+export function formatListenError(err, port) {
+  if (err && err.code === 'EADDRINUSE') {
+    return `[visual-annotate] Port ${port} is already in use. Stop the other process or set VA_PORT to a free port.`;
   }
-  return body.url;
+  return `[visual-annotate] Server error: ${err && err.message ? err.message : err}`;
 }
 
-function formatIssueBody(comment, mentions, screenshotUrl) {
-  const loc = comment.locator || {};
-  const locLine = loc.file
-    ? `**Location:** \`${loc.file}${loc.line ? ':' + loc.line : ''}\`${
-        loc.component ? ` (component: \`${loc.component}\`)` : ''
-      }`
-    : `**Location (best guess):** \`${loc.selector || 'unknown'}\``;
-
-  const consoleBlock =
-    comment.consoleLog && comment.consoleLog.length > 0
-      ? '```\n' + comment.consoleLog.map((l) => `[${l.level}] ${l.message}`).join('\n') + '\n```'
-      : '_No console output was captured for this element — likely a purely visual issue._';
-
-  const screenshotBlock = screenshotUrl
-    ? `\n**Screenshot:**\n![annotation](${screenshotUrl})\n`
-    : comment.screenshot
-      ? '\n**Screenshot:** _failed to upload_\n'
-      : '';
-
-  return [
-    comment.text,
-    '',
-    '---',
-    locLine,
-    `**Element:** \`${loc.selector || ''}\`${loc.text ? ` — "${loc.text}"` : ''}`,
-    `**Page:** ${comment.url}`,
-    `**Reported:** ${comment.time}`,
-    '',
-    '**Recent console log:**',
-    consoleBlock,
-    screenshotBlock,
-    mentions.length ? mentions.map((m) => `@${m}`).join(' ') : '',
-  ].join('\n');
+function send(res, status, payload) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(payload));
 }
 
-function issueTitle(comment) {
-  const loc = comment.locator || {};
-  let where = loc.component || loc.file || 'page';
-  if (!loc.component && !loc.file && loc.selector) {
-    const parts = loc.selector.split(' > ');
-    where = parts[parts.length - 1] || 'element';
-  }
-  const short = comment.text.length > 60 ? comment.text.slice(0, 57) + '…' : comment.text;
-  return `[VA] ${where}: ${short}`;
-}
+export function createServer(options = {}) {
+  const config = resolveConfig({ options });
+  const { owner, repo, label, port } = config;
+  const host = options.host ?? '127.0.0.1';
+  const sessionToken = options.sessionToken ?? null;
+  const allowedOrigins = options.allowedOrigins ?? [];
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const deps = createSubmissionDeps(config, { cwd: options.cwd ?? process.cwd() });
 
-export function createServer({ owner, repo, token, port = 4545 }) {
   const server = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    const origin = req.headers.origin;
+    const originAllowed = isAllowedOrigin(origin, allowedOrigins);
+    if (origin && originAllowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-VA-Token');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+
+    const pathname = (req.url || '').split('?')[0];
+    if (pathname !== '/submit') {
+      return send(res, 404, { error: 'Not found' });
+    }
+    if (!originAllowed) {
+      return send(res, 403, { error: 'Origin not allowed', created: [], failed: [] });
+    }
     if (req.method === 'OPTIONS') {
-      res.writeHead(204);
+      res.statusCode = 204;
       return res.end();
     }
-    if (req.method !== 'POST' || req.url !== '/submit') {
-      res.writeHead(404);
-      return res.end();
+    if (req.method !== 'POST') {
+      return send(res, 405, { error: 'Method not allowed', created: [], failed: [] });
+    }
+    if (sessionToken && req.headers['x-va-token'] !== sessionToken) {
+      return send(res, 401, { error: 'Missing or invalid X-VA-Token', created: [], failed: [] });
     }
 
-    let raw = '';
-    req.on('data', (chunk) => (raw += chunk));
-    req.on('end', async () => {
-      try {
-        const { comments } = JSON.parse(raw);
-        if (!Array.isArray(comments) || comments.length === 0) {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ error: 'No comments provided' }));
-        }
+    let payload;
+    try {
+      payload = JSON.parse(await readJsonBody(req, maxBodyBytes));
+    } catch (err) {
+      return send(res, err.status || 400, { error: err.message, created: [], failed: [] });
+    }
 
-        const mentions = await getCollaboratorLogins(owner, repo, token).catch(() => []);
-        const issues = [];
-        for (const comment of comments) {
-          let screenshotUrl = null;
-          if (comment.screenshot) {
-            screenshotUrl = await uploadScreenshot(owner, repo, token, comment.screenshot).catch((err) => {
-              console.error('[visual-annotate] Screenshot upload failed:', err.message);
-              return null;
-            });
-          }
-          const issue = await githubRequest(`/repos/${owner}/${repo}/issues`, token, {
-            method: 'POST',
-            body: JSON.stringify({
-              title: issueTitle(comment),
-              body: formatIssueBody(comment, mentions, screenshotUrl),
-              labels: ['visual-annotation'],
-            }),
-          });
-          issues.push({ number: issue.number, html_url: issue.html_url });
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ issues }));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      }
-    });
+    try {
+      const result = await handleSubmission(payload, deps);
+      return send(res, result.created.length > 0 ? 200 : 502, result);
+    } catch (err) {
+      return send(res, err.status || 500, { error: err.message, created: [], failed: [] });
+    }
   });
 
-  server.listen(port, () => {
-    console.log(`[visual-annotate] Local server listening on http://localhost:${port}`);
-    console.log(`[visual-annotate] Forwarding issues to ${owner}/${repo}`);
+  server.on('error', (err) => {
+    console.error(formatListenError(err, port));
+    if (err && err.code !== 'EADDRINUSE') throw err;
+  });
+
+  server.listen(port, host, () => {
+    console.log(`[visual-annotate] Local server listening on http://${host}:${port}`);
+    console.log(`[visual-annotate] Forwarding issues to ${owner}/${repo} (screenshots: ${deps.screenshots.provider})`);
   });
 
   return server;

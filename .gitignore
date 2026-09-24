@@ -2,3 +2,6 @@
 .env
 node_modules/
 test/e2e/artifacts/
+
+# Local editor/agent tool state
+.commandcode/

@@ -29,10 +29,10 @@ export function createConsoleCapture(bufferSize = 50) {
 
   function start() {
     LEVELS.forEach((level) => {
-      originals[level] = console[level].bind(console);
+      originals[level] = console[level];
       console[level] = (...args) => {
         push(level, args);
-        originals[level](...args);
+        originals[level].apply(console, args);
       };
     });
 

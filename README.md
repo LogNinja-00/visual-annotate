@@ -10,159 +10,145 @@
 
 # visual-annotate
 
-Click any element on your site while you're developing, leave a comment on it,
-and turn it into a GitHub issue — automatically, with console context attached,
-and with every collaborator on the repo mentioned so nobody misses it.
+Click any element on your site during development, write one line about what's wrong, and get a **GitHub issue an agent can pick up and act on with no follow-up questions**.
 
-Works regardless of framework (React, Vue, plain HTML, anything else), because
-the two halves of the tool are deliberately decoupled:
+The point is context. Every issue carries the source file and line, a code frame with the offending lines already in view, the element's markup and CSS path, the page URL, the git revision, the browser and viewport, the recent console output, a screenshot, and what the reporter expected to happen — plus a machine-readable JSON block so an agent parses it instead of guessing.
 
-- **The browser half** (`src/`) is plain DOM/JavaScript. It doesn't care what
-  built the page.
-- **The GitHub half** (`server/`, `bin/`) is a small local Node process you run
-  next to your dev server. It never ships to the browser, so your GitHub token
-  never touches client-side code — important since this is meant for real,
-  live projects, not just experiments.
-
-## Try it in 30 seconds (no install, no build step)
+## Install
 
 ```bash
-cd demo
-python3 -m http.server 8080
-# open http://localhost:8080 in a browser
+npm install -D visual-annotate
 ```
 
-Press `Alt+Shift+A`, click anything on the page, write a comment. "Submit
-all" will fail to connect in this quick test (no server running yet) — that's
-expected. Once you wire up the GitHub side below, the same flow creates real
-issues.
-
-## Installing into a real project
+Set credentials (a `.env` at your project root is fine — never commit it):
 
 ```bash
-npm install visual-annotate
+GITHUB_TOKEN=ghp_xxx          # "repo" scope, or "public_repo" for public repos only
+GITHUB_OWNER=your-username-or-org
+GITHUB_REPO=your-repo-name
 ```
 
-Then call `initAnnotator()` **only in development**. How you gate that
-depends on your bundler — do this yourself in your own entry file, since
-there's no single way to detect "dev vs. production" that works identically
-across every tool:
+## Vite (recommended)
+
+The plugin hosts the endpoint inside your dev server, so submissions are same-origin — no CORS, no second process, no second port.
 
 ```js
-// Vite
-if (import.meta.env.DEV) {
-  const { initAnnotator } = await import('visual-annotate');
-  initAnnotator();
-}
-```
+// vite.config.js
+import visualAnnotate from 'visual-annotate/vite';
 
-```js
-// Webpack / Create React App / most Node-based bundlers
-if (process.env.NODE_ENV !== 'production') {
-  const { initAnnotator } = await import('visual-annotate');
-  initAnnotator();
-}
-```
-
-```html
-<!-- Plain HTML with no build step: simply don't add this script tag to the
-     file you upload to your live server. Keep it only in a local copy. -->
-<script type="module">
-  import { initAnnotator } from './node_modules/visual-annotate/src/browser.js';
-  initAnnotator();
-</script>
-```
-
-**On top of whichever guard above you use**, the tool has its own built-in
-safety net: it checks `location.hostname` and only activates on
-`localhost`/`127.0.0.1` by default. Even if this script accidentally ends up
-in a production bundle, it will not activate for a real visitor. You can widen
-`allowedHosts` in config if you deploy to a staging domain you also want to
-annotate, but the default is deliberately locked to your own machine.
-
-## Keyboard shortcut
-
-Defaults to `Alt+Shift+A`. Avoid combos already claimed by the browser itself
-(e.g. `Ctrl+Shift+K` opens Firefox's own console, `Ctrl+Shift+J` opens
-Chrome's) — the browser intercepts those before this script ever sees them,
-which looks like "the shortcut doesn't work" but is really a collision.
-Customize it like this:
-
-```js
-initAnnotator({
-  shortcut: { key: 'a', alt: true, shift: true, ctrl: false },
+export default defineConfig({
+  plugins: [visualAnnotate()],
 });
 ```
 
-## Setting up the GitHub side
+That's it. In dev, press **Alt+Shift+A** to start annotating, click an element, type what's wrong, and submit with **Ctrl/⌘+Enter**. Nothing is emitted in a production build (`apply: 'serve'`).
 
-1. Create a [personal access token](https://github.com/settings/tokens) with
-   the `repo` scope (or `public_repo` if the repo is public). Keep this token
-   private — treat it like a password.
-2. Copy `.env.example` to `.env` in your project root and fill in:
-   ```
-   GITHUB_TOKEN=ghp_xxx
-   GITHUB_OWNER=your-username-or-org
-   GITHUB_REPO=your-repo-name
-   ```
-3. `.env` is already in `.gitignore` — never commit it.
-4. Run the local server alongside your normal dev server:
-   ```bash
-   npx visual-annotate serve
-   ```
-5. Leave it running. When you click "Submit all" in the browser overlay, it
-   posts your pending comments to this local server, which creates one GitHub
-   issue per comment and mentions every collaborator on the repo so everyone
-   gets notified — not just people watching the repo.
+Your app must be ESM (`"type": "module"` in `package.json`, as Vite's own scaffolds are). Vite loads a CommonJS config by bundling it with esbuild, and an ESM-only plugin cannot be `require`d from there. If you can't set the type, name the file `vite.config.mjs`.
 
-## How an element "knows itself"
+The plugin also serves `/html2canvas.min.js` from the package, so you don't need to copy anything into `public/`.
 
-Every comment's header shows where the element actually comes from, with
-three tiers of accuracy:
+## webpack
 
-1. **React (dev build):** exact file, line number, and component name, read
-   from the fiber's dev-mode `_debugSource` — the same information React's own
-   dev tooling uses. This relies on an internal (non-public) React field, so
-   it can occasionally shift between major React versions; if it ever stops
-   matching, the tool falls back to tier 3 automatically.
-2. **Vue 3 (dev build):** file path and component name, read from the
-   compiled component's `__file`.
-3. **Everything else** (plain HTML, Svelte, Angular, or a stripped production
-   build): a CSS selector path plus the element's visible text. There's no
-   separate "component file" to point to in plain HTML anyway — the selector
-   and text are usually enough to find the exact spot by searching the file.
+```js
+// webpack.config.js
+import VisualAnnotatePlugin from 'visual-annotate/webpack';
 
-This is why the location info is best-effort, not guaranteed exact — it's
-honest about that in the issue body rather than pretending to know something
-it doesn't.
+export default {
+  plugins: [new VisualAnnotatePlugin()],
+};
+```
 
-## What happens after an issue is filed
+webpack has no first-party HTML injection hook, so import the client in a dev-only entry:
 
-On purpose, this tool stops at "create a clear GitHub issue." It does not
-call any AI on your behalf. Once an issue exists:
+```js
+import { initAnnotator } from 'visual-annotate/client';
 
-- Anyone on the team can open it and work on it with whichever AI tool or
-  model they personally use.
-- Because each comment becomes its own issue (not one big combined issue),
-  the natural result is one commit per fix, referencing that issue number —
-  e.g. `git commit -m "Fix hero CTA button, closes #12"`. No extra tooling
-  needed for that; it falls out of the one-issue-per-comment design.
+if (process.env.NODE_ENV !== 'production') {
+  initAnnotator({ submitUrl: '/__visual-annotator/submit', allowedHosts: null });
+}
+```
 
-## Console log attached to each comment
+## Standalone server
 
-The last 50 console messages (configurable via `consoleBufferSize`) are kept
-in a rolling buffer and snapshotted the moment you add a comment. Uncaught
-errors and unhandled promise rejections are captured too, not just explicit
-`console.log` calls. If a comment is about a purely visual issue, the console
-section will legitimately say nothing was captured — that's expected, not
-missing data.
+For setups without a dev-server plugin:
 
-## Known limitations
+```bash
+npx visual-annotate serve
+```
 
-- The React/Vue file-location trick depends on the framework's own dev-mode
-  debug info, which only exists in development builds — this is one more
-  reason the tool must never run against a production build.
-- "One session, one batch" — comments queue up in memory in the browser tab.
-  Refreshing the page before hitting "Submit all" loses unsent comments.
-- The local server has no auth of its own; it's meant to run on your machine,
-  reachable only from your own browser tab, not exposed to a network.
+It prints a session token — pass it to the client so only your page can submit:
+
+```js
+import { initAnnotator } from 'visual-annotate/client';
+
+initAnnotator({
+  submitUrl: 'http://127.0.0.1:4545/submit',
+  token: '<token printed by the CLI>',
+});
+```
+
+The standalone server binds `127.0.0.1`, accepts submissions only from loopback origins, and requires the token.
+
+## Configuration
+
+Options passed to `initAnnotator` (or the plugin) win over environment variables.
+
+| Env var | Plugin option | Default | Meaning |
+| --- | --- | --- | --- |
+| `GITHUB_TOKEN` | `token` | — | GitHub PAT with repo scope |
+| `GITHUB_OWNER` | `owner` | — | Repo owner |
+| `GITHUB_REPO` | `repo` | — | Repo name |
+| `VA_LABEL` | `label` | `visual-annotation` | Issue label (created if missing) |
+| `VA_SCREENSHOT_PROVIDER` | `screenshotProvider` | `github` | `github`, `local`, or `off` |
+| `VA_SCREENSHOT_DIR` | `screenshotDir` | `.visual-annotator` | Folder inside the repo |
+| `VA_PORT` | `port` | `4545` | Standalone server port |
+| `VA_TOKEN` | — | random | Pin the standalone session token |
+
+Client options: `submitUrl`, `token`, `enabled`, `allowedHosts` (`null` allows any host — appropriate for dev-only injection), `consoleBufferSize`, and `shortcut` (e.g. `{ key: 'b', alt: true, shift: true }`).
+
+## Screenshots
+
+Screenshots never leave your infrastructure. The server commits the PNG through the GitHub Contents API straight into the repo the issue is filed against:
+
+```
+.visual-annotator/<date>/<annotation-id>.png
+```
+
+committed to that repository's default branch and referenced from the issue. No side branches, no third-party host.
+
+GitHub's API cannot attach an image to an issue body — the web UI's paperclip uses an internal, session-cookie-backed endpoint a token cannot drive. Committing the image into the repo is the supported way to get it in front of a reader.
+
+Alternatives: `VA_SCREENSHOT_PROVIDER=local` writes to a temp directory and references the path (nothing leaves the machine, but remote collaborators can't see it); `off` disables screenshots entirely.
+
+## How an agent consumes an issue
+
+Each issue ends with a collapsible block:
+
+```html
+<details>
+<summary>Machine-readable annotation</summary>
+
+```json
+{ "schema": "visual-annotate/1", "text": "...", "expected": "...", "locator": { ... }, "codeFrame": "...", "git": { "commit": "...", "branch": "..." }, "console": [ ... ], "screenshot": { "path": "...", "url": "..." } }
+```
+
+</details>
+```
+
+Fetch the issue body through the API and parse that block for a deterministic, versioned payload. The schema lives in `shared/annotation.js`.
+
+## Limitations
+
+The source locator is best effort, not magic:
+
+- **React** needs dev-mode JSX source info. `_debugSource` is only emitted when `@babel/plugin-transform-react-jsx-source` (or the SWC equivalent) is enabled — React 18 with the modern transform often omits it, in which case the issue falls back to a CSS selector path.
+- **Vue 3** needs the SFC compiler's dev-only `__file`.
+- Everything else (plain HTML, Svelte, Angular, or a production-stripped build) always falls back to a selector path, visible text, and element markup — still enough to locate the code by searching.
+
+## Development
+
+```bash
+npm test        # node:test, no dependencies
+```
+
+The domain glossary is in [CONTEXT.md](./CONTEXT.md).
